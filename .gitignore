@@ -1,0 +1,29 @@
+.atl/
+.codegraph/
+/BASWE-15-RAG-Concepts-Guide.pdf
+/plan.md
+
+# Python environments and secrets
+.venv/
+.env
+.env.*
+!.env.example
+
+# Python caches and build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Generated ingestion artifacts
+artifacts/
+data/generated/
