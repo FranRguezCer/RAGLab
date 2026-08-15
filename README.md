@@ -21,11 +21,13 @@ SourceInput
 
 `content` remains faithful to the converted source. Title and heading breadcrumbs are added
 only to `embedding_text`. All embeddings are produced before the database transaction begins.
-The `(source URI, content hash, pipeline fingerprint)` tuple makes repeated ingestion a no-op.
-The fingerprint includes citable source identity and provenance, so content, provenance, or
-configuration changes replace the document's chunks atomically.
+Within one collection, the `(source URI, content hash, pipeline fingerprint)` tuple makes repeated
+ingestion a no-op. The fingerprint includes citable source identity and provenance, so content or
+provenance changes replace the document's chunks atomically. A collection name is permanently bound
+to its embedding and chunking configuration; a different configuration belongs in another
+collection.
 
-## Setup
+## Quick start without notebooks
 
 Requirements: Python 3.12, Docker, and Ollama.
 
@@ -33,42 +35,213 @@ Requirements: Python 3.12, Docker, and Ollama.
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e '.[dev,tokenizers]'
+python -m pip install -e '.[dev,tokenizers,conversion]'
 python -c "from transformers import AutoTokenizer; AutoTokenizer.from_pretrained('Qwen/Qwen3-Embedding-0.6B')"
-docker compose up -d
+docker compose up -d --wait
 ollama pull qwen3-embedding:0.6b
+raglab-ingest --help
 ```
 
-The first notebook uses a versioned Markdown fixture and does not need Docling. Install
-`raglab[conversion]` when experimenting with PDF, Office, HTML, CSV, or image sources. Docling is
-loaded only for those formats and is configured for local table extraction and EasyOCR in Spanish
-and English. The tokenizer adapter requires the model files to already exist locally; no hidden
-download occurs at ingestion time.
+If Ollama is not already managed as a system service, run `ollama serve` in another terminal. The
+Compose service exposes PostgreSQL only at `127.0.0.1:5432`.
 
-Run migrations once:
+Now ingest the tracked Markdown sample from the terminal:
+
+```bash
+raglab-ingest data/samples/aster_greenhouse_controller_manual.md \
+  --collection greenhouse-manuals
+```
+
+The command runs the complete pipeline and prints a machine-readable report:
+
+```json
+{
+  "chunk_count": 9,
+  "collection": "greenhouse-manuals",
+  "document_id": "...",
+  "provenance_status": "complete",
+  "status": "indexed"
+}
+```
+
+Exact chunk counts depend on the document and chunking profile. Run the same command again and
+`status` becomes `skipped` with `chunk_count: 0`; PostgreSQL does not receive duplicate vectors.
+
+### What `raglab-ingest` does
+
+The CLI is a thin `argparse` adapter over the same public Python pipeline used by the tests and
+notebook. It does not introduce a framework or a second ingestion implementation:
+
+1. resolves a local path to one stable absolute `source_uri`, or accepts an HTTP(S) URL;
+2. creates or verifies the PostgreSQL/pgvector schema;
+3. converts the source to canonical Markdown and records observable provenance warnings;
+4. parses Markdown into structural blocks;
+5. chunks using headings, token budgets, and semantic boundary evidence;
+6. creates final 1024-dimensional embeddings with local Ollama;
+7. atomically inserts or replaces the document and its chunks;
+8. prints the `IngestionReport` as JSON.
+
+Use `raglab-ingest --help` for the complete argument list. `RAGLAB_DSN` overrides the default
+Compose connection without placing credentials in shell history:
+
+```bash
+export RAGLAB_DSN='postgresql://raglab:raglab@127.0.0.1:5432/raglab'
+```
+
+### Ingest local files
+
+Native Markdown and UTF-8 text use the lossless direct converter and do not require Docling:
+
+```bash
+raglab-ingest ./knowledge/guide.md --collection product-knowledge
+raglab-ingest ./knowledge/notes.txt --collection product-knowledge
+```
+
+PDF and document formats are converted locally with Docling:
+
+```bash
+raglab-ingest /absolute/path/operator-manual.pdf --collection operator-manuals
+raglab-ingest ./documents/handbook.docx --collection company-handbook
+raglab-ingest ./documents/policy.odt --collection company-handbook
+raglab-ingest ./documents/reference.html --collection web-archive
+```
+
+Install the local conversion extras with `python -m pip install -e '.[conversion,tokenizers]'` for
+these sources. Docling is imported only when a non-text source needs it and is configured for
+local table extraction and EasyOCR in Spanish and English.
+
+### Ingest a public URL
+
+HTTP(S) sources are downloaded and converted locally by default. The original URL remains the
+stable `source_uri` even when redirects are followed:
+
+```bash
+raglab-ingest 'https://example.org/public-guide.html' --collection public-guides
+raglab-ingest 'https://example.org/manual.pdf' --collection public-guides
+```
+
+Jina Reader is a separate, explicit privacy decision because document contents leave the local
+machine. It is never an automatic fallback:
+
+```bash
+raglab-ingest 'https://example.org/article' \
+  --collection public-articles-jina \
+  --use-jina
+```
+
+`--use-jina` accepts only public HTTP(S) URLs. Local files, credentials in URLs, localhost, and
+private, reserved, or link-local network targets are rejected.
+
+### Choose a chunking profile
+
+The default profile is target 512, minimum 120, maximum 768, semantic percentile 90, and zero
+overlap. Override it explicitly when running an experiment:
+
+```bash
+raglab-ingest ./documents/manual.pdf \
+  --collection manuals-p80 \
+  --target-tokens 512 \
+  --min-tokens 120 \
+  --max-tokens 768 \
+  --semantic-percentile 80
+```
+
+A collection is one comparable vector space with one stable configuration. Reusing
+`manuals-p80` later with percentile 90 fails instead of silently mixing incompatible artifacts;
+use another collection name such as `manuals-p90`.
+
+### Reingestion and document versions
+
+Identity is scoped by `(collection, source_uri)`:
+
+| Situation | Result |
+|---|---|
+| Same source, content, provenance, and configuration | `skipped`; existing UUID and vectors remain |
+| Same source URI, changed content or provenance | Same document UUID is updated; old chunks are replaced atomically |
+| Same filename at a different path | Separate document because the absolute `source_uri` differs |
+| Same source in another collection | Separate indexed artifact |
+
+The current schema stores the latest version of one source per collection; it is not a version
+history. Model `document_versions` explicitly if old editions must remain searchable or auditable.
+
+## Use the pipeline from a Python script
+
+The CLI is convenient automation, while the public API is better when application code needs to
+choose sources or compose further stages. A standalone script does not need Jupyter:
 
 ```python
+import os
+from pathlib import Path
+
+from raglab import CollectionConfig, SourceInput, ingest
+from raglab.chunking import ChunkingConfig
 from raglab.storage import PostgresRepository
 
-repository = PostgresRepository("postgresql://raglab:raglab@127.0.0.1:5432/raglab")
+dsn = os.environ.get(
+    "RAGLAB_DSN",
+    "postgresql://raglab:raglab@127.0.0.1:5432/raglab",
+)
+chunk_config = ChunkingConfig(
+    target_tokens=512,
+    min_tokens=120,
+    max_tokens=768,
+    semantic_percentile=90,
+)
+collection = CollectionConfig(
+    name="product-knowledge",
+    chunk_config={
+        "strategy": "structure_plus_semantics",
+        "target_tokens": chunk_config.target_tokens,
+        "min_tokens": chunk_config.min_tokens,
+        "max_tokens": chunk_config.max_tokens,
+        "semantic_percentile": chunk_config.semantic_percentile,
+        "overlap_tokens": chunk_config.overlap_tokens,
+    },
+)
+source = SourceInput.path(Path("documents/guide.pdf").resolve())
+
+repository = PostgresRepository(dsn)
 repository.migrate()
-```
-
-## Ingest a source
-
-```python
-from raglab import CollectionConfig, SourceInput, ingest
 
 report = ingest(
-    SourceInput.path("document.pdf"),
-    CollectionConfig(name="documents"),
-    dsn="postgresql://raglab:raglab@127.0.0.1:5432/raglab",
+    source,
+    collection,
+    dsn=dsn,
+    chunk_config=chunk_config,
 )
 print(report)
 ```
 
-Markdown and UTF-8 text use a lossless direct adapter. PDF, Office, HTML, CSV, and image inputs
-use local Docling. HTTP(S) URLs are downloaded and converted locally by default.
+Use `SourceInput.url("https://example.org/guide")` for local URL conversion, or
+`SourceInput.text(markdown, uri="memory://stable-name")` for Markdown already held in memory. A
+stable URI is important: it is how later executions find the same logical document.
+
+## Inspect indexed data
+
+The CLI output is the first verification boundary. PostgreSQL can then show collection totals:
+
+```bash
+docker compose exec postgres psql -U raglab -d raglab -c \
+  "SELECT * FROM collection_stats ORDER BY name;"
+```
+
+Inspect documents and their citable provenance without reading vector payloads:
+
+```bash
+docker compose exec postgres psql -U raglab -d raglab -c \
+  "SELECT source_uri, source_name, title, provenance_status, updated_at FROM documents ORDER BY updated_at DESC;"
+```
+
+Common failures are deliberately explicit:
+
+| Error | Meaning and action |
+|---|---|
+| PostgreSQL connection refused | Run `docker compose up -d --wait` and check `RAGLAB_DSN` |
+| Ollama cannot be reached | Start `ollama serve` or the local Ollama service |
+| Embedding model unavailable | Run `ollama pull qwen3-embedding:0.6b` |
+| Docling conversion unavailable | Install `python -m pip install -e '.[conversion,tokenizers]'` |
+| Tokenizer files unavailable locally | Run the explicit `AutoTokenizer.from_pretrained(...)` setup command once |
+| Collection exists with another configuration | Reuse the original flags or choose a new collection name |
 
 ## Format and provenance support
 
@@ -82,6 +255,11 @@ inventing coordinates the source does not provide.
 | PDF | Docling | No | Yes, when page markers map successfully | `complete`, or `partial` with a warning |
 | DOCX | Docling | No | Only when Docling exposes meaningful pages | `complete`, `partial`, or `unavailable` |
 | ODT / ODS / ODP | Docling | No | Only when Docling exposes meaningful pages | `complete`, `partial`, or `unavailable` |
+
+The direct path is intentionally limited to `.md`, `.markdown`, and `.txt`. Other local files are
+delegated to the installed Docling version. PDF, HTML, DOCX, ODT, ODS, and ODP routing is covered
+by this project; acceptance of additional Docling formats such as presentations, spreadsheets,
+CSV, or images depends on that installed Docling release and may provide weaker provenance.
 
 `source_name` is always a displayable source identity. A local source uses its filename. A URL
 uses, in order, its Content-Disposition filename, decoded final path segment, hostname, or full
@@ -101,19 +279,6 @@ HTML and Markdown never receive an invented page 1. If optional location enrichm
 conversion succeeds, ingestion continues with canonical lines, a `partial` or `unavailable`
 status, and warnings in both `IngestionReport` and PostgreSQL. Conversion, parsing, embedding, and
 database failures remain hard failures.
-
-### Remote Jina Reader is explicit
-
-Jina Reader is never a fallback. It can receive document contents, so it is restricted to a URL
-that resolves entirely to public IP addresses and requires both controls:
-
-```python
-source = SourceInput.url("https://example.org/article", allow_remote_service=True)
-report = pipeline.ingest(source, collection, use_jina=True)
-```
-
-Localhost, credentials in URLs, non-HTTP schemes, private/link-local/reserved networks, and local
-files are rejected. DNS is validated before calling the service.
 
 ## Inspect and search
 

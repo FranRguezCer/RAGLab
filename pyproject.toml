@@ -13,6 +13,9 @@ dependencies = [
   "psycopg[binary]>=3.2,<4",
 ]
 
+[project.scripts]
+raglab-ingest = "raglab.cli:main"
+
 [project.optional-dependencies]
 conversion = ["docling>=2,<3", "easyocr>=1.7,<2"]
 tokenizers = ["transformers>=4.51,<5"]
