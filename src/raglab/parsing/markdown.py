@@ -52,7 +52,7 @@ class MarkdownParser:
             index += 1
         return ParsedMarkdown(
             source_uri=document.source_uri,
-            title=title,
+            title=title or document.title,
             blocks=tuple(self._deduplicate(blocks)),
             markdown=document.markdown,
         )

@@ -2,6 +2,7 @@
 .codegraph/
 /BASWE-15-RAG-Concepts-Guide.pdf
 /plan.md
+/GUIA_RAGLAB_LOCAL.md
 
 # Python environments and secrets
 .venv/
@@ -24,6 +25,6 @@ dist/
 # Jupyter
 .ipynb_checkpoints/
 
-# Generated ingestion artifacts
+# Generated ingestion artifacts. Controlled samples and evaluation labels stay tracked.
 artifacts/
 data/generated/

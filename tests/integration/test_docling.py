@@ -4,7 +4,7 @@ import importlib.util
 
 import pytest
 
-from raglab import SourceInput
+from raglab import ProvenanceStatus, SourceInput
 from raglab.conversion import Converter
 
 pytestmark = pytest.mark.integration
@@ -17,3 +17,7 @@ def test_docling_converts_lightweight_html(tmp_path) -> None:
     result = Converter().convert(SourceInput.path(path))
     assert "Local" in result.markdown
     assert "Converted content" in result.markdown
+    assert result.source_name == "sample.html"
+    assert result.provenance_status is ProvenanceStatus.UNAVAILABLE
+    assert result.provenance_warnings
+    assert all(line.page_number is None for line in result.line_provenance)

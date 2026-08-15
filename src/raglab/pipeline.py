@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Sequence
+from dataclasses import replace
 from typing import Protocol
 
 from raglab.chunking import ChunkingConfig, SemanticChunker, TransformersTokenCounter
@@ -83,8 +84,11 @@ class IngestionPipeline:
                 chunk_count=0,
                 content_hash=converted.content_hash,
                 fingerprint=fingerprint,
+                provenance_status=converted.provenance_status,
+                provenance_warnings=converted.provenance_warnings,
             )
         parsed = self.parser.parse(converted)
+        stored_document = replace(converted, title=parsed.title)
         chunks = self.chunker.chunk(parsed)
         vectors = self.embeddings.embed_documents([item.embedding_text for item in chunks])
         if len(vectors) != len(chunks):
@@ -93,7 +97,9 @@ class IngestionPipeline:
             EmbeddedChunk(chunk=item, embedding=tuple(vector))
             for item, vector in zip(chunks, vectors, strict=True)
         ]
-        document_id, skipped = self.repository.store(collection, converted, embedded, fingerprint)
+        document_id, skipped = self.repository.store(
+            collection, stored_document, embedded, fingerprint
+        )
         return IngestionReport(
             source_uri=source.uri,
             collection=collection.name,
@@ -102,12 +108,33 @@ class IngestionPipeline:
             chunk_count=0 if skipped else len(chunks),
             content_hash=converted.content_hash,
             fingerprint=fingerprint,
+            provenance_status=converted.provenance_status,
+            provenance_warnings=converted.provenance_warnings,
         )
 
     def _fingerprint(self, document: ConvertedDocument, collection: CollectionConfig) -> str:
+        line_provenance = sorted(
+            (
+                (item.markdown_line, item.source_line, item.page_number)
+                for item in document.line_provenance
+            ),
+            key=lambda item: (
+                item[0],
+                item[1] if item[1] is not None else 0,
+                item[2] if item[2] is not None else 0,
+            ),
+        )
         payload = {
-            "pipeline": 1,
+            "pipeline": 3,
             "converter": [document.converter, document.converter_version],
+            "citable_source": {
+                "source_name": document.source_name,
+                "media_type": document.media_type,
+                "title": document.title,
+                "line_provenance": line_provenance,
+                "provenance_status": document.provenance_status.value,
+                "provenance_warnings": sorted(document.provenance_warnings),
+            },
             "model": collection.model,
             "dimension": collection.dimension,
             "metric": collection.metric,

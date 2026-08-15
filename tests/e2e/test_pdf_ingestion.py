@@ -23,4 +23,9 @@ def test_baswe_pdf_to_pgvector_query() -> None:
     report = ingest(SourceInput.path(pdf), CollectionConfig(collection), dsn=dsn)
     query = OllamaEmbeddingProvider().embed_documents(["RAG ingestion principles"])[0]
     assert report.chunk_count > 0
-    assert repository.search(collection, query)
+    results = repository.search(collection, query)
+    assert results
+    assert results[0].citation.source_name == pdf.name
+    assert results[0].citation.start_page is not None
+    assert results[0].citation.end_page is not None
+    assert results[0].citation.start_page <= results[0].citation.end_page

@@ -24,6 +24,12 @@ class BlockKind(StrEnum):
     OTHER = "other"
 
 
+class ProvenanceStatus(StrEnum):
+    COMPLETE = "complete"
+    PARTIAL = "partial"
+    UNAVAILABLE = "unavailable"
+
+
 @dataclass(frozen=True, slots=True)
 class SourceInput:
     uri: str
@@ -51,14 +57,36 @@ class SourceInput:
 
 
 @dataclass(frozen=True, slots=True)
+class LineProvenance:
+    """Location metadata for one line in canonical Markdown."""
+
+    markdown_line: int
+    source_line: int | None = None
+    page_number: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.markdown_line < 1:
+            raise ValueError("markdown_line must be 1-based")
+        if self.source_line is not None and self.source_line < 1:
+            raise ValueError("source_line must be 1-based when present")
+        if self.page_number is not None and self.page_number < 1:
+            raise ValueError("page_number must be 1-based when present")
+
+
+@dataclass(frozen=True, slots=True)
 class ConvertedDocument:
     source_uri: str
     markdown: str
     content_hash: str
     converter: str
     converter_version: str
+    source_name: str
+    media_type: str | None = None
+    title: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
-    line_provenance: tuple[str, ...] = ()
+    line_provenance: tuple[LineProvenance, ...] = ()
+    provenance_status: ProvenanceStatus = ProvenanceStatus.UNAVAILABLE
+    provenance_warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +126,20 @@ class EmbeddedChunk:
 
 
 @dataclass(frozen=True, slots=True)
+class Citation:
+    source_uri: str
+    source_name: str
+    title: str | None
+    heading_path: tuple[str, ...]
+    start_page: int | None
+    end_page: int | None
+    start_line: int | None
+    end_line: int | None
+    provenance_status: ProvenanceStatus
+    provenance_warnings: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class CollectionConfig:
     name: str
     model: str = "qwen3-embedding:0.6b"
@@ -115,3 +157,5 @@ class IngestionReport:
     chunk_count: int
     content_hash: str
     fingerprint: str
+    provenance_status: ProvenanceStatus
+    provenance_warnings: tuple[str, ...] = ()

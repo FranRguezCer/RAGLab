@@ -7,7 +7,13 @@ from dataclasses import dataclass
 from importlib.resources import files
 from typing import TYPE_CHECKING, Any
 
-from raglab.contracts import CollectionConfig, ConvertedDocument, EmbeddedChunk
+from raglab.contracts import (
+    Citation,
+    CollectionConfig,
+    ConvertedDocument,
+    EmbeddedChunk,
+    ProvenanceStatus,
+)
 from raglab.errors import StorageError
 
 if TYPE_CHECKING:
@@ -21,10 +27,41 @@ class SearchResult:
     source_uri: str
     content: str
     distance: float
+    citation: Citation
 
 
 def _vector(values: Sequence[float]) -> str:
     return "[" + ",".join(format(value, ".17g") for value in values) + "]"
+
+
+def _line_provenance_json(document: ConvertedDocument) -> str:
+    return json.dumps(
+        [
+            {
+                "markdown_line": item.markdown_line,
+                "source_line": item.source_line,
+                "page_number": item.page_number,
+            }
+            for item in document.line_provenance
+        ]
+    )
+
+
+def _chunk_page_range(
+    document: ConvertedDocument,
+    start_line: int | None,
+    end_line: int | None,
+) -> tuple[int | None, int | None]:
+    if start_line is None or end_line is None or start_line < 1 or end_line < start_line:
+        return None, None
+    pages = [
+        item.page_number
+        for item in document.line_provenance
+        if start_line <= item.markdown_line <= end_line and item.page_number is not None
+    ]
+    if not pages:
+        return None, None
+    return min(pages), max(pages)
 
 
 class PostgresRepository:
@@ -137,26 +174,40 @@ class PostgresRepository:
                 return str(existing[0]), True
             cursor.execute(
                 """INSERT INTO documents
-                       (collection_id, source_uri, markdown, content_hash, converter,
-                        converter_version, metadata, fingerprint)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s)
+                       (collection_id, source_uri, source_name, media_type, title, markdown,
+                        content_hash, converter, converter_version, metadata, line_provenance,
+                        provenance_status, provenance_warnings, fingerprint)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb,
+                           %s, %s::jsonb, %s)
                    ON CONFLICT (collection_id, source_uri) DO UPDATE SET
+                       source_name = EXCLUDED.source_name,
+                       media_type = EXCLUDED.media_type,
+                       title = EXCLUDED.title,
                        markdown = EXCLUDED.markdown,
                        content_hash = EXCLUDED.content_hash,
                        converter = EXCLUDED.converter,
                        converter_version = EXCLUDED.converter_version,
                        metadata = EXCLUDED.metadata,
+                       line_provenance = EXCLUDED.line_provenance,
+                       provenance_status = EXCLUDED.provenance_status,
+                       provenance_warnings = EXCLUDED.provenance_warnings,
                        fingerprint = EXCLUDED.fingerprint,
                        updated_at = now()
                    RETURNING id""",
                 (
                     collection_id,
                     document.source_uri,
+                    document.source_name,
+                    document.media_type,
+                    document.title,
                     document.markdown,
                     document.content_hash,
                     document.converter,
                     document.converter_version,
                     json.dumps(dict(document.metadata)),
+                    _line_provenance_json(document),
+                    document.provenance_status.value,
+                    json.dumps(document.provenance_warnings),
                     fingerprint,
                 ),
             )
@@ -167,11 +218,16 @@ class PostgresRepository:
             cursor.execute("DELETE FROM chunks WHERE document_id = %s", (document_id,))
             for item in chunks:
                 chunk = item.chunk
+                start_page, end_page = _chunk_page_range(
+                    document, chunk.start_line, chunk.end_line
+                )
                 cursor.execute(
                     """INSERT INTO chunks
                            (document_id, chunk_index, content, embedding_text, token_count,
-                            heading_path, start_line, end_line, metadata, embedding)
-                       VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s::jsonb, %s::vector)""",
+                            heading_path, start_line, end_line, start_page, end_page, metadata,
+                            embedding)
+                       VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s::jsonb,
+                               %s::vector)""",
                     (
                         document_id,
                         chunk.index,
@@ -181,6 +237,8 @@ class PostgresRepository:
                         json.dumps(chunk.heading_path),
                         chunk.start_line,
                         chunk.end_line,
+                        start_page,
+                        end_page,
                         json.dumps(dict(chunk.metadata)),
                         _vector(item.embedding),
                     ),
@@ -237,7 +295,10 @@ class PostgresRepository:
                 cursor.execute("SELECT set_config('hnsw.ef_search', %s, true)", (str(ef_search),))
             cursor.execute(
                 """SELECT ch.id, d.id, d.source_uri, ch.content,
-                          ch.embedding <=> %s::vector AS distance
+                          ch.embedding <=> %s::vector AS distance,
+                          d.source_name, d.title, ch.heading_path,
+                          ch.start_page, ch.end_page, ch.start_line, ch.end_line,
+                          d.provenance_status, d.provenance_warnings
                    FROM chunks ch
                    JOIN documents d ON d.id = ch.document_id
                    JOIN collections c ON c.id = d.collection_id
@@ -248,5 +309,24 @@ class PostgresRepository:
             )
             rows = cursor.fetchall()
         return [
-            SearchResult(str(row[0]), str(row[1]), row[2], row[3], float(row[4])) for row in rows
+            SearchResult(
+                chunk_id=str(row[0]),
+                document_id=str(row[1]),
+                source_uri=row[2],
+                content=row[3],
+                distance=float(row[4]),
+                citation=Citation(
+                    source_uri=row[2],
+                    source_name=row[5],
+                    title=row[6],
+                    heading_path=tuple(row[7]),
+                    start_page=row[8],
+                    end_page=row[9],
+                    start_line=row[10],
+                    end_line=row[11],
+                    provenance_status=ProvenanceStatus(row[12]),
+                    provenance_warnings=tuple(row[13]),
+                ),
+            )
+            for row in rows
         ]

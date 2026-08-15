@@ -15,11 +15,20 @@ CREATE TABLE IF NOT EXISTS documents (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     collection_id uuid NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
     source_uri text NOT NULL,
+    source_name text NOT NULL CHECK (length(source_name) > 0),
+    media_type text,
+    title text,
     markdown text NOT NULL,
     content_hash text NOT NULL,
     converter text NOT NULL,
     converter_version text NOT NULL,
     metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+    line_provenance jsonb NOT NULL DEFAULT '[]'::jsonb
+        CHECK (jsonb_typeof(line_provenance) = 'array'),
+    provenance_status text NOT NULL
+        CHECK (provenance_status IN ('complete', 'partial', 'unavailable')),
+    provenance_warnings jsonb NOT NULL DEFAULT '[]'::jsonb
+        CHECK (jsonb_typeof(provenance_warnings) = 'array'),
     fingerprint text NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
@@ -36,8 +45,14 @@ CREATE TABLE IF NOT EXISTS chunks (
     heading_path jsonb NOT NULL DEFAULT '[]'::jsonb,
     start_line integer,
     end_line integer,
+    start_page integer,
+    end_page integer,
     metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
     embedding vector(1024) NOT NULL,
+    CHECK ((start_line IS NULL) = (end_line IS NULL)),
+    CHECK (start_line IS NULL OR (start_line > 0 AND end_line >= start_line)),
+    CHECK ((start_page IS NULL) = (end_page IS NULL)),
+    CHECK (start_page IS NULL OR (start_page > 0 AND end_page >= start_page)),
     UNIQUE (document_id, chunk_index)
 );
 
@@ -57,4 +72,3 @@ FROM collections c
 LEFT JOIN documents d ON d.collection_id = c.id
 LEFT JOIN chunks ch ON ch.document_id = d.id
 GROUP BY c.id, c.name, c.model, c.dimension;
-

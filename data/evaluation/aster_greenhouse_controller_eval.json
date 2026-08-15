@@ -1,0 +1,65 @@
+{
+  "document": "aster_greenhouse_controller_manual.md",
+  "must_separate": [
+    {
+      "id": "safety_to_commissioning",
+      "left_anchor": "A supervisor must inspect the interlock",
+      "right_anchor": "Commissioning establishes the identity",
+      "reason": "Safety response and sensor commissioning are different tasks."
+    },
+    {
+      "id": "sensor_note_to_backup_note",
+      "left_anchor": "attach the observation to the shift log",
+      "right_anchor": "Configuration backups belong to a different operational concern",
+      "reason": "The lightly structured handover section intentionally changes from sensor diagnosis to configuration recovery."
+    },
+    {
+      "id": "faults_to_maintenance",
+      "left_anchor": "the active alarm disappears",
+      "right_anchor": "Clean probe surfaces monthly",
+      "reason": "Fault resolution and scheduled maintenance should remain independently retrievable."
+    }
+  ],
+  "must_keep": [
+    {
+      "id": "calibration_references",
+      "left_anchor": "Press **Set dry reference**",
+      "right_anchor": "The wet reference is accepted only after three stable readings",
+      "reason": "The dry and wet calibration steps need each other."
+    },
+    {
+      "id": "low_flow_response",
+      "left_anchor": "flow must rise above 1.2 liters per minute",
+      "right_anchor": "raises `E17`",
+      "reason": "The threshold and its fault code form one rule."
+    },
+    {
+      "id": "restore_scope",
+      "left_anchor": "place the controller in Observe mode",
+      "right_anchor": "it replaces device identities",
+      "reason": "Restore preparation and scope belong to the same recovery instruction."
+    }
+  ],
+  "queries": [
+    {
+      "id": "low_flow",
+      "text": "What does the controller do when irrigation flow remains too low?",
+      "answer_anchor": "raises `E17`"
+    },
+    {
+      "id": "wet_bed",
+      "text": "Will a scheduled irrigation window water a bed that is already wet?",
+      "answer_anchor": "SKIPPED_WET_BED"
+    },
+    {
+      "id": "backup_restore",
+      "text": "What information is replaced when a configuration backup is restored?",
+      "answer_anchor": "it replaces device identities"
+    },
+    {
+      "id": "isolation",
+      "text": "What should an operator do if the isolation banner does not appear?",
+      "answer_anchor": "record fault `E41`"
+    }
+  ]
+}

@@ -3,7 +3,7 @@ from raglab.parsing import MarkdownParser
 
 
 def document(markdown: str) -> ConvertedDocument:
-    return ConvertedDocument("memory://test", markdown, "hash", "test", "1")
+    return ConvertedDocument("memory://test", markdown, "hash", "test", "1", "test.md")
 
 
 def test_parser_preserves_structural_blocks_and_lines() -> None:
