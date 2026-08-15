@@ -8,24 +8,43 @@ LlamaIndex.
 
 ## Architecture
 
-```text
-SourceInput
-  -> conversion (direct / local Docling / local URL / opt-in Jina)
-  -> canonical Markdown
-  -> Markdown AST blocks (markdown-it-py)
-  -> structural units -> semantic boundary refinement
-  -> Ollama qwen3-embedding:0.6b (1024 dimensions)
-  -> one atomic PostgreSQL document replacement
-  -> faithful retrieval content + structured citation
+```mermaid
+flowchart LR
+    FILE["Local file"] --> CONVERT{"Choose converter"}
+    URL["HTTP(S) URL"] --> CONVERT
+    MEMORY["In-memory Markdown"] --> CONVERT
+
+    CONVERT -->|Markdown or text| DIRECT["Direct, lossless conversion"]
+    CONVERT -->|PDF, Office, HTML, image| DOCLING["Local Docling conversion"]
+    CONVERT -->|URL by default| LOCAL_URL["Local download + direct or Docling"]
+    CONVERT -->|URL + --use-jina| JINA["Jina Reader<br/>external opt-in"]
+
+    DIRECT --> MARKDOWN["Canonical Markdown<br/>+ provenance"]
+    DOCLING --> MARKDOWN
+    LOCAL_URL --> MARKDOWN
+    JINA --> MARKDOWN
+
+    MARKDOWN --> AST["Markdown AST blocks"]
+    AST --> UNITS["Structural units"]
+    UNITS --> BOUNDARY["Temporary Ollama embeddings<br/>for boundary evidence"]
+    UNITS --> CHUNKING["Hybrid chunking"]
+    BOUNDARY --> CHUNKING
+    CHUNKING --> CHUNKS["Faithful content<br/>+ contextual embedding_text"]
+    CHUNKS --> OLLAMA["Final local Ollama embeddings<br/>1024 dimensions"]
+    CHUNKS --> TX["Atomic storage transaction"]
+    OLLAMA --> TX
+    TX --> POSTGRES["PostgreSQL + pgvector<br/>document, chunks, citations, vectors"]
 ```
 
-`content` remains faithful to the converted source. Title and heading breadcrumbs are added
-only to `embedding_text`. All embeddings are produced before the database transaction begins.
+The temporary embeddings compare neighbouring structural units and are discarded after chunking.
+The final stored vectors are generated separately from each chunk's `embedding_text`. `content`
+remains faithful to the converted source, while title and heading breadcrumbs are added only to
+`embedding_text`. All embeddings are produced before the database transaction begins.
 Within one collection, the `(source URI, content hash, pipeline fingerprint)` tuple makes repeated
 ingestion a no-op. The fingerprint includes citable source identity and provenance, so content or
-provenance changes replace the document's chunks atomically. A collection name is permanently bound
-to its embedding and chunking configuration; a different configuration belongs in another
-collection.
+provenance changes replace the document's chunks atomically. RAGLab treats a collection name as
+permanently bound to its embedding and chunking configuration; a different configuration belongs
+in another collection.
 
 ## Quick start without notebooks
 
@@ -146,11 +165,87 @@ raglab-ingest ./documents/manual.pdf \
   --semantic-percentile 80
 ```
 
-A collection is one comparable vector space with one stable configuration. Reusing
-`manuals-p80` later with percentile 90 fails instead of silently mixing incompatible artifacts;
-use another collection name such as `manuals-p90`.
+## Collections are retrieval boundaries
 
-### Reingestion and document versions
+A collection is **not just a folder or label**. It is a logical search boundary plus an immutable
+retrieval contract. Think of it as one library room whose books share the same cataloguing rules:
+documents may have different formats and topics, but their chunks are prepared and compared under
+one declared model, vector dimension, distance metric, and chunking profile.
+
+PostgreSQL stores this contract once in `collections`. Every document points to one collection,
+and every chunk points to one document. Retrieval always names a collection, so chunks from other
+collections are excluded from that search.
+
+The boundary is logical, not a separate PostgreSQL database or table. All chunk vectors currently
+share the same `chunks` table and HNSW index; the SQL query joins through `documents` and filters by
+the selected collection name.
+
+### What a collection fixes
+
+| Field | Why it belongs to the collection |
+|---|---|
+| `name` | Stable identifier supplied to ingestion and retrieval |
+| `model` | Embedding model that gives every vector its coordinate system |
+| `dimension` | Vector length; currently fixed by the schema at 1024 |
+| `metric` | Distance interpretation; currently cosine |
+| `chunk_config` | Structural and semantic rules used to create retrieval units |
+
+The first ingestion creates the collection row. Later ingestion with the same name must provide
+exactly the same model, dimension, metric, and `chunk_config`. A mismatch raises an error **before
+documents are mixed**. RAGLab therefore refuses to combine p80 chunks with p90 chunks in one named
+collection.
+
+### Reuse a collection or declare a new one?
+
+Start with the retrieval question: **should these chunks compete in the same search result?** Then
+check whether they use the same technical contract.
+
+| Situation | Decision | Why |
+|---|---|---|
+| Add another Markdown, PDF, DOCX, ODT, or URL to the same knowledge base | Reuse | File format does not define vector compatibility |
+| Ingest a newer edition at the same `source_uri` | Reuse | It is the same logical resource and should replace its old chunks |
+| Add a different language that should be searched together with the corpus | Reuse | The current embedding model is multilingual and the profile is unchanged |
+| Compare p80 against p90 chunking | New collection | Each profile creates different retrieval units and must be evaluated independently |
+| Change embedding model, dimension, or distance metric | New collection | Old and new vectors do not share the same retrieval contract |
+| Keep product manuals and HR policies out of each other's results | Usually new collection | They answer different search intents and should not compete |
+| Create a frozen historical snapshot while keeping the current corpus | New collection or explicit version model | Reusing the collection intentionally replaces the current source version |
+| Add one more ordinary document with the same profile | Reuse | One collection per document creates needless operational fragmentation |
+
+A collection is **not an authorization boundary**. A separate collection is useful for retrieval
+isolation, but confidential tenants or environments still require PostgreSQL permissions, schemas,
+databases, or application-level access control.
+
+```mermaid
+flowchart TD
+    START["New ingestion request"] --> TOGETHER{"Should its chunks compete<br/>in the same searches?"}
+    TOGETHER -->|No| NEW["Declare a new collection"]
+    TOGETHER -->|Yes| MODEL{"Same model, dimension,<br/>and metric?"}
+    MODEL -->|No| NEW
+    MODEL -->|Yes| PROFILE{"Same chunking profile?"}
+    PROFILE -->|No| NEW
+    PROFILE -->|Yes| URI{"Same source_uri already<br/>exists in the collection?"}
+    URI -->|No| ADD["Add a new document"]
+    URI -->|Yes| IDENTITY{"Same content hash<br/>and fingerprint?"}
+    IDENTITY -->|Yes| SKIP["Skip: keep existing vectors"]
+    IDENTITY -->|No| REPLACE["Update document<br/>and replace old chunks"]
+```
+
+### Name collections by corpus and contract
+
+Prefer a stable, readable name such as:
+
+```text
+product-manuals-qwen-p90
+hr-policies-qwen-p90
+product-manuals-qwen-p80-experiment
+```
+
+The name should describe **what is searched together** and, when multiple profiles coexist, the
+profile. Do not include a content hash unless the collection intentionally represents an immutable
+snapshot. Different formats do not need format-specific collections when they belong to the same
+corpus.
+
+### Reingestion inside one collection
 
 Identity is scoped by `(collection, source_uri)`:
 
@@ -163,6 +258,8 @@ Identity is scoped by `(collection, source_uri)`:
 
 The current schema stores the latest version of one source per collection; it is not a version
 history. Model `document_versions` explicitly if old editions must remain searchable or auditable.
+If a local file is moved, its absolute `source_uri` changes and PostgreSQL sees a new document; the
+old row must be removed explicitly if it should no longer be searchable.
 
 ## Use the pipeline from a Python script
 
@@ -216,7 +313,122 @@ Use `SourceInput.url("https://example.org/guide")` for local URL conversion, or
 `SourceInput.text(markdown, uri="memory://stable-name")` for Markdown already held in memory. A
 stable URI is important: it is how later executions find the same logical document.
 
-## Inspect indexed data
+## PostgreSQL + pgvector storage model
+
+The database keeps configuration, source-level truth, and retrieval units at different levels.
+This avoids copying the full document metadata into every chunk while still allowing retrieval to
+return faithful evidence and a complete citation.
+
+```mermaid
+erDiagram
+    COLLECTIONS ||--o{ DOCUMENTS : contains
+    DOCUMENTS ||--o{ CHUNKS : produces
+
+    COLLECTIONS {
+        uuid id PK
+        text name UK
+        text model
+        integer dimension
+        text metric
+        jsonb chunk_config
+        timestamptz created_at
+    }
+
+    DOCUMENTS {
+        uuid id PK
+        uuid collection_id FK
+        text source_uri
+        text source_name
+        text media_type
+        text title
+        text markdown
+        text content_hash
+        text converter
+        text converter_version
+        jsonb metadata
+        jsonb line_provenance
+        text provenance_status
+        jsonb provenance_warnings
+        text fingerprint
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    CHUNKS {
+        uuid id PK
+        uuid document_id FK
+        integer chunk_index
+        text content
+        text embedding_text
+        integer token_count
+        jsonb heading_path
+        integer start_line
+        integer end_line
+        integer start_page
+        integer end_page
+        jsonb metadata
+        vector embedding
+    }
+```
+
+The important relational constraints are:
+
+- `collections.name` is globally unique;
+- `(documents.collection_id, documents.source_uri)` is unique, so one collection stores one current
+  row for each logical source;
+- `(chunks.document_id, chunks.chunk_index)` is unique;
+- deleting a collection cascades to its documents and chunks;
+- deleting a document cascades to its chunks.
+
+### What belongs at each level
+
+| Level | Stored information | Reason |
+|---|---|---|
+| Collection | Model, dimension, cosine metric, complete chunk profile | Defines how all children are produced and compared |
+| Document | Full canonical Markdown, source identity, title, media type, converter, hash, fingerprint, metadata, line/page provenance and warnings | Preserves source-level truth once |
+| Chunk | Faithful `content`, contextual `embedding_text`, token count, heading path, line/page ranges, chunk metadata and `vector(1024)` | Supplies the unit ranked and cited by retrieval |
+
+`content` is the evidence eventually shown to an LLM or user. `embedding_text` adds title and
+heading context only to produce a better vector; storing it makes the indexed artifact inspectable,
+but retrieval returns faithful `content` instead. Document metadata is joined at search time to
+build the citation, so title and source identity do not need to be duplicated into every chunk.
+
+The HNSW index exists on `chunks.embedding`. It is a shared physical index over the table, while
+the collection name remains the logical filter. The `collection_stats` view joins all three levels
+to expose document, chunk, and token totals per collection.
+
+### Atomic writes and replacements
+
+An unchanged source is detected by collection contract, `source_uri`, `content_hash`, and
+fingerprint and returns `skipped`. For a changed source, RAGLab creates every replacement embedding
+before opening the database transaction. Inside that transaction it:
+
+1. updates the existing document row while preserving its UUID;
+2. deletes all old chunks for that document;
+3. inserts the complete new chunk set and vectors;
+4. commits everything together.
+
+If storage fails, PostgreSQL rolls back the transaction instead of leaving a half-updated document.
+The previous edition is replaced, not retained as history.
+
+### How retrieval reconstructs citable evidence
+
+```mermaid
+flowchart LR
+    QUESTION["User query"] --> QUERY_VECTOR["Ollama query embedding"]
+    COLLECTION["Selected collection name"] --> SEARCH["PostgresRepository.search"]
+    QUERY_VECTOR --> SEARCH
+    SEARCH --> FILTER["Scope chunks to the selected collection"]
+    FILTER --> RANK["Cosine distance<br/>HNSW or exact diagnostic"]
+    RANK --> JOIN["Join document metadata<br/>and chunk location fields"]
+    JOIN --> RESULT["SearchResult<br/>faithful content + distance + Citation"]
+```
+
+Search does not return a raw vector as evidence. It uses the vector only for ranking, then returns
+the stored faithful chunk plus the document title/source and the chunk heading, page, and line
+ranges needed to cite it.
+
+### Inspect indexed data
 
 The CLI output is the first verification boundary. PostgreSQL can then show collection totals:
 
@@ -225,11 +437,25 @@ docker compose exec postgres psql -U raglab -d raglab -c \
   "SELECT * FROM collection_stats ORDER BY name;"
 ```
 
+Inspect the immutable contract attached to each collection:
+
+```bash
+docker compose exec postgres psql -U raglab -d raglab -c \
+  "SELECT name, model, dimension, metric, jsonb_pretty(chunk_config) AS chunk_config FROM collections ORDER BY name;"
+```
+
 Inspect documents and their citable provenance without reading vector payloads:
 
 ```bash
 docker compose exec postgres psql -U raglab -d raglab -c \
   "SELECT source_uri, source_name, title, provenance_status, updated_at FROM documents ORDER BY updated_at DESC;"
+```
+
+Check whether the same source exists in more than one collection:
+
+```bash
+docker compose exec postgres psql -U raglab -d raglab -c \
+  "SELECT c.name, d.source_uri, d.id, count(ch.id) AS chunks FROM collections c JOIN documents d ON d.collection_id = c.id LEFT JOIN chunks ch ON ch.document_id = d.id GROUP BY c.name, d.source_uri, d.id ORDER BY d.source_uri, c.name;"
 ```
 
 Common failures are deliberately explicit:
