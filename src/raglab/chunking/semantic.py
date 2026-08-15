@@ -4,6 +4,7 @@ import math
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 from raglab.contracts import BlockKind, Chunk, MarkdownBlock, ParsedMarkdown
@@ -31,11 +32,18 @@ class TransformersTokenCounter:
 
     def __init__(self, model: str = "Qwen/Qwen3-Embedding-0.6B") -> None:
         try:
+            from huggingface_hub import snapshot_download
             from transformers import AutoTokenizer
         except ImportError as exc:
             raise RuntimeError("Install `raglab[tokenizers]` to use the Qwen tokenizer") from exc
+        local_model = Path(model).expanduser()
+        tokenizer_source = (
+            str(local_model)
+            if local_model.exists()
+            else snapshot_download(repo_id=model, local_files_only=True)
+        )
         self._tokenizer = AutoTokenizer.from_pretrained(  # type: ignore[no-untyped-call]
-            model, local_files_only=True
+            tokenizer_source, local_files_only=True
         )
 
     def count(self, text: str) -> int:
@@ -109,7 +117,11 @@ class SemanticChunker:
         if not units:
             return []
         distances = self._distances(units)
-        threshold = _percentile(distances, self.config.semantic_percentile)
+        threshold = (
+            _percentile(distances, self.config.semantic_percentile)
+            if self.embeddings is not None
+            else math.inf
+        )
         self.last_distances = tuple(distances)
         self.last_threshold = threshold
         groups: list[list[_Unit]] = []
