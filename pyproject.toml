@@ -15,10 +15,12 @@ dependencies = [
 
 [project.scripts]
 raglab-ingest = "raglab.cli:main"
+raglab-retrieve = "raglab.retrieval.cli:main"
 
 [project.optional-dependencies]
 conversion = ["docling>=2,<3", "easyocr>=1.7,<2"]
 tokenizers = ["transformers>=4.51,<5"]
+retrieval = ["transformers>=4.51,<5", "torch>=2.5,<3"]
 dev = [
   "mypy>=1.15,<2",
   "nbclient>=0.10,<1",
