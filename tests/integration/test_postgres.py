@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from uuid import uuid4
 
+import psycopg
 import pytest
 
 from raglab import (
@@ -24,6 +25,19 @@ def test_migration_idempotency_view_and_search() -> None:
     repository = PostgresRepository(os.environ["RAGLAB_TEST_DSN"])
     repository.migrate()
     repository.migrate()
+    with (
+        psycopg.connect(os.environ["RAGLAB_TEST_DSN"]) as connection,
+        connection.cursor() as cursor,
+    ):
+        cursor.execute("SELECT extname FROM pg_extension WHERE extname = 'pg_search'")
+        assert cursor.fetchone() == ("pg_search",)
+        cursor.execute(
+            """SELECT am.amname
+               FROM pg_class cls
+               JOIN pg_am am ON am.oid = cls.relam
+               WHERE cls.relname = 'chunks_bm25_idx'"""
+        )
+        assert cursor.fetchone() == ("paradedb",)
     run_id = uuid4().hex
     config = CollectionConfig(name=f"integration-test-{run_id}")
     source_uri = f"memory://integration/{run_id}"

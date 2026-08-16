@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: pgvector/pgvector:0.8.6-pg17
+    image: paradedb/paradedb:0.25.0-pg17
     environment:
       POSTGRES_DB: raglab
       POSTGRES_USER: raglab
@@ -8,7 +8,7 @@ services:
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
-      - raglab-postgres:/var/lib/postgresql/data
+      - raglab-paradedb:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U raglab -d raglab"]
       interval: 5s
@@ -17,3 +17,4 @@ services:
 
 volumes:
   raglab-postgres:
+  raglab-paradedb:

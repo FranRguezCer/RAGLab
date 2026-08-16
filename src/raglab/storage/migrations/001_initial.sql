@@ -1,5 +1,6 @@
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE EXTENSION IF NOT EXISTS pg_search;
 
 CREATE TABLE IF NOT EXISTS collections (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -60,6 +61,17 @@ CREATE INDEX IF NOT EXISTS chunks_embedding_hnsw
     ON chunks USING hnsw (embedding vector_cosine_ops)
     WITH (m = 16, ef_construction = 64);
 CREATE INDEX IF NOT EXISTS documents_collection_idx ON documents (collection_id);
+CREATE INDEX IF NOT EXISTS documents_metadata_gin
+    ON documents USING gin (metadata jsonb_path_ops);
+CREATE INDEX IF NOT EXISTS chunks_metadata_gin
+    ON chunks USING gin (metadata jsonb_path_ops);
+CREATE INDEX IF NOT EXISTS chunks_heading_path_gin
+    ON chunks USING gin (heading_path jsonb_path_ops);
+CREATE INDEX IF NOT EXISTS chunks_document_index_idx
+    ON chunks (document_id, chunk_index);
+CREATE INDEX IF NOT EXISTS chunks_bm25_idx
+    ON chunks USING paradedb (id, content, embedding_text, document_id, chunk_index, metadata)
+    WITH (key_field = 'id');
 
 CREATE OR REPLACE VIEW collection_stats AS
 SELECT
