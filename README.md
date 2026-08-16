@@ -182,13 +182,14 @@ the selected collection name.
 
 ### What a collection fixes
 
-| Field | Why it belongs to the collection |
-|---|---|
-| `name` | Stable identifier supplied to ingestion and retrieval |
-| `model` | Embedding model that gives every vector its coordinate system |
-| `dimension` | Vector length; currently fixed by the schema at 1024 |
-| `metric` | Distance interpretation; currently cosine |
-| `chunk_config` | Structural and semantic rules used to create retrieval units |
+
+| Field          | Why it belongs to the collection                              |
+| ---------------- | --------------------------------------------------------------- |
+| `name`         | Stable identifier supplied to ingestion and retrieval         |
+| `model`        | Embedding model that gives every vector its coordinate system |
+| `dimension`    | Vector length; currently fixed by the schema at 1024          |
+| `metric`       | Distance interpretation; currently cosine                     |
+| `chunk_config` | Structural and semantic rules used to create retrieval units  |
 
 The first ingestion creates the collection row. Later ingestion with the same name must provide
 exactly the same model, dimension, metric, and `chunk_config`. A mismatch raises an error **before
@@ -200,16 +201,17 @@ collection.
 Start with the retrieval question: **should these chunks compete in the same search result?** Then
 check whether they use the same technical contract.
 
-| Situation | Decision | Why |
-|---|---|---|
-| Add another Markdown, PDF, DOCX, ODT, or URL to the same knowledge base | Reuse | File format does not define vector compatibility |
-| Ingest a newer edition at the same `source_uri` | Reuse | It is the same logical resource and should replace its old chunks |
-| Add a different language that should be searched together with the corpus | Reuse | The current embedding model is multilingual and the profile is unchanged |
-| Compare p80 against p90 chunking | New collection | Each profile creates different retrieval units and must be evaluated independently |
-| Change embedding model, dimension, or distance metric | New collection | Old and new vectors do not share the same retrieval contract |
-| Keep product manuals and HR policies out of each other's results | Usually new collection | They answer different search intents and should not compete |
-| Create a frozen historical snapshot while keeping the current corpus | New collection or explicit version model | Reusing the collection intentionally replaces the current source version |
-| Add one more ordinary document with the same profile | Reuse | One collection per document creates needless operational fragmentation |
+
+| Situation                                                                 | Decision                                 | Why                                                                                |
+| --------------------------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------ |
+| Add another Markdown, PDF, DOCX, ODT, or URL to the same knowledge base   | Reuse                                    | File format does not define vector compatibility                                   |
+| Ingest a newer edition at the same `source_uri`                           | Reuse                                    | It is the same logical resource and should replace its old chunks                  |
+| Add a different language that should be searched together with the corpus | Reuse                                    | The current embedding model is multilingual and the profile is unchanged           |
+| Compare p80 against p90 chunking                                          | New collection                           | Each profile creates different retrieval units and must be evaluated independently |
+| Change embedding model, dimension, or distance metric                     | New collection                           | Old and new vectors do not share the same retrieval contract                       |
+| Keep product manuals and HR policies out of each other's results          | Usually new collection                   | They answer different search intents and should not compete                        |
+| Create a frozen historical snapshot while keeping the current corpus      | New collection or explicit version model | Reusing the collection intentionally replaces the current source version           |
+| Add one more ordinary document with the same profile                      | Reuse                                    | One collection per document creates needless operational fragmentation             |
 
 A collection is **not an authorization boundary**. A separate collection is useful for retrieval
 isolation, but confidential tenants or environments still require PostgreSQL permissions, schemas,
@@ -249,12 +251,13 @@ corpus.
 
 Identity is scoped by `(collection, source_uri)`:
 
-| Situation | Result |
-|---|---|
-| Same source, content, provenance, and configuration | `skipped`; existing UUID and vectors remain |
-| Same source URI, changed content or provenance | Same document UUID is updated; old chunks are replaced atomically |
-| Same filename at a different path | Separate document because the absolute `source_uri` differs |
-| Same source in another collection | Separate indexed artifact |
+
+| Situation                                           | Result                                                            |
+| ----------------------------------------------------- | ------------------------------------------------------------------- |
+| Same source, content, provenance, and configuration | `skipped`; existing UUID and vectors remain                       |
+| Same source URI, changed content or provenance      | Same document UUID is updated; old chunks are replaced atomically |
+| Same filename at a different path                   | Separate document because the absolute `source_uri` differs       |
+| Same source in another collection                   | Separate indexed artifact                                         |
 
 The current schema stores the latest version of one source per collection; it is not a version
 history. Model `document_versions` explicitly if old editions must remain searchable or auditable.
@@ -382,11 +385,12 @@ The important relational constraints are:
 
 ### What belongs at each level
 
-| Level | Stored information | Reason |
-|---|---|---|
-| Collection | Model, dimension, cosine metric, complete chunk profile | Defines how all children are produced and compared |
-| Document | Full canonical Markdown, source identity, title, media type, converter, hash, fingerprint, metadata, line/page provenance and warnings | Preserves source-level truth once |
-| Chunk | Faithful `content`, contextual `embedding_text`, token count, heading path, line/page ranges, chunk metadata and `vector(1024)` | Supplies the unit ranked and cited by retrieval |
+
+| Level      | Stored information                                                                                                                     | Reason                                             |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| Collection | Model, dimension, cosine metric, complete chunk profile                                                                                | Defines how all children are produced and compared |
+| Document   | Full canonical Markdown, source identity, title, media type, converter, hash, fingerprint, metadata, line/page provenance and warnings | Preserves source-level truth once                  |
+| Chunk      | Faithful `content`, contextual `embedding_text`, token count, heading path, line/page ranges, chunk metadata and `vector(1024)`        | Supplies the unit ranked and cited by retrieval    |
 
 `content` is the evidence eventually shown to an LLM or user. `embedding_text` adds title and
 heading context only to produce a better vector; storing it makes the indexed artifact inspectable,
@@ -396,6 +400,50 @@ build the citation, so title and source identity do not need to be duplicated in
 The HNSW index exists on `chunks.embedding`. It is a shared physical index over the table, while
 the collection name remains the logical filter. The `collection_stats` view joins all three levels
 to expose document, chunk, and token totals per collection.
+
+### Exact search, ANN, and HNSW
+
+An exact nearest-neighbour search calculates the distance from the query vector to every eligible
+stored vector and then sorts the results. That produces the reference ranking for the selected
+vector space, but its work grows with the number of vectors.
+
+**ANN (Approximate Nearest Neighbors)** search avoids comparing against every vector. It uses an
+index to visit only promising regions of the vector space, reducing query latency at the cost of
+possibly missing one or more neighbours from the exact top K. That lost agreement is measured as
+recall: recall@K compares the approximate top K with the exact top K.
+
+**HNSW (Hierarchical Navigable Small World)** is the ANN algorithm used here. It stores vectors as
+a multilayer proximity graph. Upper layers provide long-range routes toward a relevant region;
+lower layers refine the walk among nearby vectors. HNSW does not change chunking or embeddings—it
+changes how PostgreSQL searches the vectors after they have been stored.
+
+The pinned pgvector 0.8.6 image exposes three different controls:
+
+| Parameter | Phase | RAGLab value | Meaning and tradeoff |
+| --------- | ----- | ------------ | -------------------- |
+| `m` | Index construction and later inserts | `16` | Maximum graph connections per non-ground layer; pgvector permits `2 × m` on the ground layer. Higher values can improve recall but increase index size, memory use, build time, and insert cost. |
+| `ef_construction` | Index construction and later inserts | `64` | Size of the dynamic candidate list used while selecting neighbours for a vector. It does not globally order chunks. Higher values can build a better-connected graph but slow construction and inserts. |
+| `ef_search` | Each approximate query | `100` | Size of the candidate list explored during search. Higher values usually improve recall but increase query latency. pgvector itself defaults to `40`; `PostgresRepository.search` overrides it transaction-locally. |
+
+The migration declares `m = 16` and `ef_construction = 64` explicitly for reproducible new
+installations. Existing indexes created before that declaration may show no `reloptions`; with the
+pinned pgvector version they still use those same defaults. Changing either build parameter is an
+index-level operation and requires rebuilding the physical index. They are therefore not ingestion
+flags and do not belong to one logical collection's `chunk_config`.
+
+The default repository query is **index-enabled**, not guaranteed to be an HNSW scan. PostgreSQL's
+planner may choose an exact scan and sort for a small or highly selective collection. Use `EXPLAIN`
+to verify the actual plan instead of inferring it from the Python method call.
+
+All collections currently share one physical HNSW index. When PostgreSQL does choose approximate
+search, collection filtering can happen after graph candidates are produced. A small collection
+inside a much larger global corpus can therefore return fewer than the requested limit or lose
+recall. Raising `ef_search` may help but does not remove that architectural tradeoff; iterative
+scans, partitioning, or separate physical indexes are scale-dependent alternatives.
+
+The unnumbered `notebooks/benchmark_ingestion_hyperparameters.ipynb` keeps these experiments away
+from the sequential curriculum. It compares exact and ANN results, records the chosen plan, and
+measures recall@K, latency, build time, and index size before recommending any non-default value.
 
 ### Atomic writes and replacements
 
@@ -460,27 +508,29 @@ docker compose exec postgres psql -U raglab -d raglab -c \
 
 Common failures are deliberately explicit:
 
-| Error | Meaning and action |
-|---|---|
-| PostgreSQL connection refused | Run `docker compose up -d --wait` and check `RAGLAB_DSN` |
-| Ollama cannot be reached | Start `ollama serve` or the local Ollama service |
-| Embedding model unavailable | Run `ollama pull qwen3-embedding:0.6b` |
-| Docling conversion unavailable | Install `python -m pip install -e '.[conversion,tokenizers]'` |
-| Tokenizer files unavailable locally | Run the explicit `AutoTokenizer.from_pretrained(...)` setup command once |
-| Collection exists with another configuration | Reuse the original flags or choose a new collection name |
+
+| Error                                        | Meaning and action                                                      |
+| ---------------------------------------------- | ------------------------------------------------------------------------- |
+| PostgreSQL connection refused                | Run `docker compose up -d --wait` and check `RAGLAB_DSN`                 |
+| Ollama cannot be reached                     | Start `ollama serve` or the local Ollama service                         |
+| Embedding model unavailable                  | Run `ollama pull qwen3-embedding:0.6b`                                   |
+| Docling conversion unavailable               | Install `python -m pip install -e '.[conversion,tokenizers]'`            |
+| Tokenizer files unavailable locally          | Run the explicit `AutoTokenizer.from_pretrained(...)` setup command once |
+| Collection exists with another configuration | Reuse the original flags or choose a new collection name                |
 
 ## Format and provenance support
 
 Every format becomes canonical Markdown. Location metadata describes that Markdown without
 inventing coordinates the source does not provide.
 
-| Source | Converter | Original lines | Pages | Expected status |
-|---|---|---:|---:|---|
-| Markdown / UTF-8 text | Direct | Yes | No | `complete` |
-| Local or public HTML | Docling | No | No | `unavailable` with a warning |
-| PDF | Docling | No | Yes, when page markers map successfully | `complete`, or `partial` with a warning |
-| DOCX | Docling | No | Only when Docling exposes meaningful pages | `complete`, `partial`, or `unavailable` |
-| ODT / ODS / ODP | Docling | No | Only when Docling exposes meaningful pages | `complete`, `partial`, or `unavailable` |
+
+| Source                | Converter | Original lines |                                      Pages | Expected status                         |
+| ----------------------- | ----------- | ---------------: | -------------------------------------------: | ----------------------------------------- |
+| Markdown / UTF-8 text | Direct    |            Yes |                                         No | `complete`                              |
+| Local or public HTML  | Docling   |             No |                                         No | `unavailable` with a warning            |
+| PDF                   | Docling   |             No |    Yes, when page markers map successfully | `complete`, or `partial` with a warning |
+| DOCX                  | Docling   |             No | Only when Docling exposes meaningful pages | `complete`, `partial`, or `unavailable` |
+| ODT / ODS / ODP       | Docling   |             No | Only when Docling exposes meaningful pages | `complete`, `partial`, or `unavailable` |
 
 The direct path is intentionally limited to `.md`, `.markdown`, and `.txt`. Other local files are
 delegated to the installed Docling version. PDF, HTML, DOCX, ODT, ODS, and ODP routing is covered
@@ -510,8 +560,9 @@ database failures remain hard failures.
 
 The migration creates `collections`, `documents`, `chunks`, an HNSW cosine index, and the
 `collection_stats` view. `PostgresRepository.search(..., exact=True)` forces a sequential exact
-diagnostic query; the default path uses HNSW and permits an `ef_search` override. Comparing both
-is useful for verifying recall during development.
+diagnostic query; the default path permits the planner to use HNSW and applies an `ef_search`
+override. Comparing both is useful for verifying recall, but `EXPLAIN` is the authority on whether
+PostgreSQL actually selected the graph index.
 
 Each `SearchResult` keeps the existing IDs, URI, distance, and faithful chunk `content`, and adds
 a structured `citation` with source name, nullable title, heading path, canonical line range,
@@ -529,12 +580,16 @@ fallback and review your firewall before exposing any additional interface.
 Notebook names follow `NN_<rag_stage>.ipynb`. Only the first stage exists today; the remaining
 rows document the intended learning order rather than placeholder files.
 
-| Stage | Notebook | Outcome |
-|---|---|---|
-| 01 | `01_ingestion_and_indexing.ipynb` | Inspect conversion, AST parsing, chunking, embeddings, and pgvector indexing |
-| 02 | `02_retrieval.ipynb` | Compare query design, filters, recall, and ranking |
-| 03 | `03_generation.ipynb` | Generate answers from retrieved evidence |
-| 04 | `04_rag_evaluation.ipynb` | Evaluate the complete RAG behaviour |
+
+| Stage | Notebook                          | Outcome                                                                      |
+| ------- | ----------------------------------- | ------------------------------------------------------------------------------ |
+| 01    | `01_ingestion_and_indexing.ipynb` | Inspect conversion, AST parsing, chunking, embeddings, and pgvector indexing |
+| 02    | `02_retrieval.ipynb`              | Compare query design, filters, recall, and ranking                           |
+| 03    | `03_generation.ipynb`             | Generate answers from retrieved evidence                                     |
+| 04    | `04_rag_evaluation.ipynb`         | Evaluate the complete RAG behaviour                                          |
+
+`benchmark_ingestion_hyperparameters.ipynb` is intentionally unnumbered. It is an experimental
+workbench for chunking and ANN/HNSW parameters, not the next required curriculum stage.
 
 The first notebook uses the fictional Aster greenhouse controller manual under `data/samples/`.
 Its separate manifest under `data/evaluation/` defines boundaries that should stay together or

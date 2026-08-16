@@ -57,7 +57,8 @@ CREATE TABLE IF NOT EXISTS chunks (
 );
 
 CREATE INDEX IF NOT EXISTS chunks_embedding_hnsw
-    ON chunks USING hnsw (embedding vector_cosine_ops);
+    ON chunks USING hnsw (embedding vector_cosine_ops)
+    WITH (m = 16, ef_construction = 64);
 CREATE INDEX IF NOT EXISTS documents_collection_idx ON documents (collection_id);
 
 CREATE OR REPLACE VIEW collection_stats AS
