@@ -1,10 +1,10 @@
 # RAGLab
 
-RAGLab is a local-first, inspectable ingestion pipeline for learning the foundations of
+RAGLab is a local-first, inspectable ingestion and retrieval lab for learning the foundations of
 retrieval-augmented generation. It converts sources to canonical Markdown, parses their
 structure, refines oversized sections with semantic boundaries, creates Ollama embeddings,
-and stores them in PostgreSQL with pgvector. It deliberately does not use LangChain or
-LlamaIndex.
+and stores them in ParadeDB with PostgreSQL, pgvector, and BM25. Its independent retrieval layer
+combines semantic and lexical evidence without LangChain or LlamaIndex.
 
 ## Architecture
 
@@ -85,6 +85,103 @@ The command runs the complete pipeline and prints a machine-readable report:
 
 Exact chunk counts depend on the document and chunking profile. Run the same command again and
 `status` becomes `skipped` with `chunk_count: 0`; PostgreSQL does not receive duplicate vectors.
+
+## Hybrid retrieval quick path
+
+The retrieval path is deliberately separate from ingestion: `raglab-ingest` still creates the
+same chunks, while `raglab-retrieve` reads those chunks through ANN and BM25 channels.
+
+1. Start ParadeDB and install the local reranker dependencies:
+
+   ```bash
+   docker compose up -d --wait
+   python -m pip install -e '.[retrieval]'
+   ollama pull qwen3-embedding:0.6b
+   ollama pull qwen3:4b  # only when using query rewriting
+   ```
+
+2. Reingest the corpus into the new database volume:
+
+   ```bash
+   raglab-ingest data/samples/aster_greenhouse_controller_manual.md \
+     --collection greenhouse-manuals
+   ```
+
+3. Retrieve citable evidence:
+
+   ```bash
+   raglab-retrieve "What causes fault E17?" \
+     --collection greenhouse-manuals \
+     --top-k 5
+   ```
+
+Compose now uses `paradedb/paradedb:0.25.0-pg17` and the `raglab-paradedb` volume. The former
+`raglab-postgres` volume is intentionally retained and is not migrated or deleted. Because the new
+volume starts empty, reingest documents with the unchanged `raglab-ingest` command before running
+retrieval. Do not copy PostgreSQL data files between the two images.
+
+### Retrieval stages
+
+```mermaid
+flowchart LR
+    QUERY["Original query"] --> REWRITE["Optional standalone rewrite<br/>+ up to two expansions"]
+    REWRITE --> ANN["Semantic ANN<br/>pgvector HNSW"]
+    REWRITE --> BM25["Lexical BM25<br/>ParadeDB"]
+    FILTERS["Shared SQL prefilters"] --> ANN
+    FILTERS --> BM25
+    ANN --> RRF["Reciprocal Rank Fusion<br/>k = 60"]
+    BM25 --> RRF
+    RRF --> RERANK["BGE reranker"]
+    RERANK --> PARENT["Dynamic small-to-big<br/>parent expansion"]
+    PARENT --> DEDUPE["Parent deduplication"]
+    DEDUPE --> MMR["MMR diversity<br/>lambda = 0.7"]
+    MMR --> RESULTS["Five citable results"]
+```
+
+The original query is always present. Rewriting is enabled only with `--rewrite` or a history
+file; a failed rewrite falls back to the original query. Each query variant contributes up to 50
+candidates per channel by default. RRF rewards chunks supported by multiple rankings without
+requiring ANN distance and BM25 score to share a numerical scale. The local
+`BAAI/bge-reranker-v2-m3` cross-encoder then scores query/document pairs more precisely.
+
+Small-to-big retrieval does **not** create or rewrite chunks. It expands a matched child at read
+time across contiguous chunks in the same document and heading, up to the token budget. Expansion
+stops at a heading change, a gap, the document boundary, the token limit, or a neighbour that no
+longer satisfies the request filters. Empty headings use a centred contiguous window. The dynamic
+parent ID is `document_id:first_chunk_index-last_chunk_index`; parents are deduplicated before MMR,
+and the best matched child's embedding represents each parent for diversity selection.
+
+### Filters
+
+Repeat `--filter field:operator=value` to add SQL prefilters. The same predicates constrain ANN,
+BM25, and parent expansion, so a tenant rejected by the initial search cannot leak back through a
+neighbouring chunk.
+
+| Field | Operators | Example |
+| ----- | --------- | ------- |
+| `document.metadata.<path>` | `eq`, `ne`, `in`, `contains` | `document.metadata.tenant_id:eq=acme` |
+| `chunk.metadata.<path>` | `eq`, `ne`, `in`, `contains` | `chunk.metadata.language:in=["en","es"]` |
+| `document.source_uri` | `eq`, `ne`, `in`, `contains` | `document.source_uri:contains=/manuals/` |
+| `document.source_name`, `document.title`, `document.media_type` | `eq`, `ne`, `in`, `contains` | `document.media_type:eq=application/pdf` |
+
+Values accept JSON scalars. `in` accepts either a JSON list or comma-separated scalar values.
+A collection is still a retrieval boundary, not an authorization boundary; enforce access control
+outside this convenience filter layer as well.
+
+### Retrieval controls
+
+| Flag | Effect |
+| ---- | ------ |
+| `--candidate-k N`, `--top-k N` | Control candidates per channel/variant and final result count. |
+| `--ef-search N`, `--exact` | Tune HNSW query breadth or force exact semantic diagnostics. |
+| `--rewrite`, `--history-file FILE`, `--expansions 0..2` | Create a standalone query and optional expansions through Ollama. |
+| `--no-rerank` | Skip the local BGE cross-encoder and rank from RRF. |
+| `--no-small-to-big`, `--parent-max-tokens N` | Disable or bound dynamic parent expansion. |
+| `--no-mmr`, `--mmr-lambda 0..1` | Disable diversity selection or balance relevance against redundancy. |
+
+`--history-file` reads a JSON list of strings or objects with a string `content` field. The JSON
+response exposes the original and rewritten queries, variants, filters, faithful content,
+citations, matched child IDs, parent ranges, and ANN, BM25, RRF, reranker, and MMR traces.
 
 ### What `raglab-ingest` does
 
@@ -417,7 +514,7 @@ a multilayer proximity graph. Upper layers provide long-range routes toward a re
 lower layers refine the walk among nearby vectors. HNSW does not change chunking or embeddings—it
 changes how PostgreSQL searches the vectors after they have been stored.
 
-The pinned pgvector 0.8.6 image exposes three different controls:
+The pgvector extension bundled with the pinned ParadeDB image exposes three different controls:
 
 | Parameter | Phase | RAGLab value | Meaning and tradeoff |
 | --------- | ----- | ------------ | -------------------- |
@@ -459,12 +556,12 @@ before opening the database transaction. Inside that transaction it:
 If storage fails, PostgreSQL rolls back the transaction instead of leaving a half-updated document.
 The previous edition is replaced, not retained as history.
 
-### How retrieval reconstructs citable evidence
+### Vector diagnostics and citable evidence
 
 ```mermaid
 flowchart LR
     QUESTION["User query"] --> QUERY_VECTOR["Ollama query embedding"]
-    COLLECTION["Selected collection name"] --> SEARCH["PostgresRepository.search"]
+    COLLECTION["Selected collection name"] --> SEARCH["PostgresRepository.search<br/>vector diagnostic"]
     QUERY_VECTOR --> SEARCH
     SEARCH --> FILTER["Scope chunks to the selected collection"]
     FILTER --> RANK["Cosine distance<br/>HNSW or exact diagnostic"]
@@ -472,9 +569,10 @@ flowchart LR
     JOIN --> RESULT["SearchResult<br/>faithful content + distance + Citation"]
 ```
 
-Search does not return a raw vector as evidence. It uses the vector only for ranking, then returns
-the stored faithful chunk plus the document title/source and the chunk heading, page, and line
-ranges needed to cite it.
+`PostgresRepository.search` remains the existing vector-only diagnostic API. Product retrieval uses
+the independent `raglab.retrieval` package described above. Neither path returns a raw vector as
+evidence: results contain faithful stored content plus the document title/source and the heading,
+page, and line ranges needed to cite it.
 
 ### Inspect indexed data
 
@@ -558,11 +656,11 @@ database failures remain hard failures.
 
 ## Inspect and search
 
-The migration creates `collections`, `documents`, `chunks`, an HNSW cosine index, and the
-`collection_stats` view. `PostgresRepository.search(..., exact=True)` forces a sequential exact
-diagnostic query; the default path permits the planner to use HNSW and applies an `ef_search`
-override. Comparing both is useful for verifying recall, but `EXPLAIN` is the authority on whether
-PostgreSQL actually selected the graph index.
+The migration creates `collections`, `documents`, `chunks`, HNSW and BM25 indexes, JSONB filter
+indexes, and the `collection_stats` view. `PostgresRepository.search(..., exact=True)` forces a
+sequential exact vector diagnostic query; the default path permits the planner to use HNSW and
+applies an `ef_search` override. Comparing both is useful for verifying recall, but `EXPLAIN` is
+the authority on whether PostgreSQL actually selected the graph index.
 
 Each `SearchResult` keeps the existing IDs, URI, distance, and faithful chunk `content`, and adds
 a structured `citation` with source name, nullable title, heading path, canonical line range,
@@ -577,14 +675,14 @@ fallback and review your firewall before exposing any additional interface.
 
 ## Sequential notebook curriculum
 
-Notebook names follow `NN_<rag_stage>.ipynb`. Only the first stage exists today; the remaining
-rows document the intended learning order rather than placeholder files.
+Notebook names follow `NN_<rag_stage>.ipynb`. The ingestion and retrieval stages are executable;
+the remaining rows document the intended learning order rather than placeholder files.
 
 
 | Stage | Notebook                          | Outcome                                                                      |
 | ------- | ----------------------------------- | ------------------------------------------------------------------------------ |
 | 01    | `01_ingestion_and_indexing.ipynb` | Inspect conversion, AST parsing, chunking, embeddings, and pgvector indexing |
-| 02    | `02_retrieval.ipynb`              | Compare query design, filters, recall, and ranking                           |
+| 02    | `02_retrieval.ipynb`              | Inspect BM25, semantic search, RRF, filters, reranking, MMR, and parent expansion |
 | 03    | `03_generation.ipynb`             | Generate answers from retrieved evidence                                     |
 | 04    | `04_rag_evaluation.ipynb`         | Evaluate the complete RAG behaviour                                          |
 
@@ -596,22 +694,26 @@ Its separate manifest under `data/evaluation/` defines boundaries that should st
 split, plus retrieval queries with known answer anchors. Both files are tracked inputs;
 `data/generated/` remains ignored for disposable conversion artifacts.
 
-The notebook is committed without outputs. Run it from the project environment after starting
-PostgreSQL and Ollama. Set `RAGLAB_DSN` only when the database is not using the Compose default.
+Notebooks are committed without outputs. Notebook 02 keeps external execution disabled by default;
+set `RAGLAB_RUN_RETRIEVAL_NOTEBOOK=1` only after starting ParadeDB and Ollama and ingesting its
+sample collection. Set `RAGLAB_DSN` only when the database is not using the Compose default.
 
 ```bash
 pytest
 ruff check .
 mypy src
 jupyter execute notebooks/01_ingestion_and_indexing.ipynb --output /tmp/raglab.ipynb
+jupyter execute notebooks/02_retrieval.ipynb --output /tmp/raglab-retrieval.ipynb
 ```
 
-Integration tests are opt-in because they require heavyweight services:
+Retrieval integration and end-to-end tests are opt-in because they require external services. Use
+a disposable test database: the suites create and migrate collections.
 
 ```bash
-pytest -m integration
-pytest -m e2e
+export RAGLAB_TEST_DSN='postgresql://raglab:raglab@127.0.0.1:5432/raglab'
+pytest -m integration tests/integration/test_retrieval.py
+RAGLAB_RETRIEVAL_E2E=1 pytest -m e2e tests/e2e/test_hybrid_retrieval.py
 ```
 
-The first notebook performs diagnostic retrieval and inspects citable results. Product retrieval
-orchestration, generation, and reranking remain outside this stage.
+The first notebook performs vector diagnostics while the second exercises the product retrieval
+orchestration. Generation remains outside these stages.
