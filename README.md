@@ -25,8 +25,9 @@ Jina Reader is available only as an explicit opt-in for public URLs.
 | 6 | [Appendix A](#appendix-a--test-strategy-and-suite) | Prove each system boundary |
 
 The tracked fictional **Aster Greenhouse Controller Manual** provides a controlled corpus with
-known boundaries and answer anchors. The optional real corpus is
-[*Attention Is All You Need*](https://arxiv.org/abs/1706.03762); its PDF is ignored by Git.
+known boundaries and answer anchors. For a real-world example, search arXiv for the well-known
+paper *Attention Is All You Need*. RAGLab used it to test the complete ingestion path with a real
+PDF.
 
 ## Architecture
 
@@ -267,8 +268,7 @@ per-collection ingestion flags.
 
 ## Optional real PDF: *Attention Is All You Need*
 
-`/attention.pdf` remains in `.gitignore`. Download it from the official arXiv endpoint and opt into
-the notebook appendix:
+Download the paper from arXiv and opt into the notebook appendix:
 
 ```bash
 curl -L https://arxiv.org/pdf/1706.03762 -o attention.pdf
@@ -277,8 +277,8 @@ jupyter execute notebooks/01_ingestion_and_indexing.ipynb \
   --output /tmp/raglab-ingestion-attention.ipynb
 ```
 
-The Aster corpus remains the controlled fixture; the paper exercises real PDF conversion without
-adding a large binary to Git.
+The Aster corpus remains the controlled fixture; the paper provides a practical example for
+exploring real PDF conversion.
 
 # Chapter 2 — Hybrid retrieval
 
@@ -510,8 +510,9 @@ collections. Never aim destructive fixtures at production.
 
 ## Symptom and root cause
 
-`raglab-retrieve` and the Codex process running it terminated under global memory pressure. The
-kernel OOM killer, not an ordinary Python exception, ended the process.
+During a retrieval run, the operating system terminated `raglab-retrieve` when memory usage
+exceeded the available RAM. The kernel OOM killer, not an ordinary Python exception, ended the
+process.
 
 The original reranker processed 32 query/document pairs as one padded tensor. Sequences reached
 864 tokens, the float32 BGE model occupied about 2.2 GiB, and autograd remained active. Peak RSS
