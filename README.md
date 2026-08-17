@@ -179,9 +179,49 @@ outside this convenience filter layer as well.
 | `--no-small-to-big`, `--parent-max-tokens N` | Disable or bound dynamic parent expansion. |
 | `--no-mmr`, `--mmr-lambda 0..1` | Disable diversity selection or balance relevance against redundancy. |
 
+#### `raglab-retrieve` defaults
+
+Only `query` is required. Every other CLI parameter has the following default:
+
+| Parameter | Default | Meaning |
+| --------- | ------- | ------- |
+| `query` | No default; required | Question or search query. |
+| `--collection` | `documents` | Collection searched by both retrieval channels. |
+| `--dsn` | `RAGLAB_DSN`, otherwise `postgresql://raglab:raglab@127.0.0.1:5432/raglab` | PostgreSQL connection string. |
+| `--filter` | None | Repeatable SQL prefilter in `field:operator=value` form. |
+| `--candidate-k` | `50` | Maximum candidates returned by each ANN or BM25 channel for each query variant. |
+| `--top-k` | `5` | Maximum final results after reranking, parent deduplication, and MMR. |
+| `--ef-search` | `100` | HNSW search breadth for approximate semantic retrieval. |
+| `--exact` | Disabled | Use exact semantic search instead of HNSW diagnostics when enabled. |
+| `--rewrite` | Disabled | Ask Ollama to create a standalone query; providing history also enables rewriting. |
+| `--history-file` | None | JSON conversation history used for rewriting. |
+| `--expansions` | `0` | Additional rewrite variants; accepted range is `0..2`. |
+| `--no-rerank` | Disabled | BGE reranking is enabled unless this fallback flag is present. |
+| `--no-mmr` | Disabled | MMR diversity selection is enabled unless this flag is present. |
+| `--mmr-lambda` | `0.7` | MMR balance between relevance (`1`) and diversity (`0`). |
+| `--no-small-to-big` | Disabled | Dynamic parent expansion is enabled unless this flag is present. |
+| `--parent-max-tokens` | `1500` | Maximum token budget for each dynamically expanded parent. |
+| `-h`, `--help` | Disabled | Print the CLI help and exit. |
+
+The CLI keeps RRF `k=60`, semantic weight `1.0`, and BM25 weight `1.0` as fixed pipeline defaults;
+they are not command-line parameters. It uses `qwen3-embedding:0.6b` for query embeddings,
+`qwen3:4b` for optional rewriting, and `BAAI/bge-reranker-v2-m3` for reranking.
+
 `--history-file` reads a JSON list of strings or objects with a string `content` field. The JSON
 response exposes the original and rewritten queries, variants, filters, faithful content,
 citations, matched child IDs, parent ranges, and ANN, BM25, RRF, reranker, and MMR traces.
+
+#### BGE reranker memory behavior
+
+Reranking remains enabled by default, but inference is deliberately bounded: PyTorch runs under
+`inference_mode`, each query/document pair is truncated to 512 tokens, and candidates are scored
+in internal microbatches of four while preserving their order. This prevents autograd state and
+one oversized candidate batch from exhausting local memory without reducing `--candidate-k`.
+
+As a reference measurement, 32 candidates on the validated WSL environment completed with about
+2.4 GiB peak RSS, compared with about 14.6 GiB before these limits. Exact memory use depends on the
+platform and dependency versions. On a more constrained machine, `--no-rerank` remains the
+explicit low-memory fallback and leaves the RRF order in control.
 
 ### What `raglab-ingest` does
 
