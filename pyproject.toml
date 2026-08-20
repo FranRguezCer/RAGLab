@@ -11,12 +11,13 @@ requires-python = ">=3.12"
 dependencies = [
   "markdown-it-py>=3.0,<5",
   "psycopg[binary]>=3.2,<4",
+  "python-dotenv>=1.0,<2",
 ]
 
 [project.scripts]
-raglab-ingest = "raglab.cli:main"
-raglab-retrieve = "raglab.retrieval.cli:main"
-raglab-generate = "raglab.generation.cli:main"
+raglab-ingest = "raglab.cli:entrypoint"
+raglab-retrieve = "raglab.retrieval.cli:entrypoint"
+raglab-generate = "raglab.generation.cli:entrypoint"
 
 [project.optional-dependencies]
 conversion = ["docling>=2,<3", "easyocr>=1.7,<2"]

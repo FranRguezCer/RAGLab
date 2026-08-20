@@ -13,6 +13,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from raglab.chunking import ChunkingConfig
+from raglab.config import load_project_env
 from raglab.contracts import CollectionConfig, SourceInput
 from raglab.errors import RagLabError
 from raglab.pipeline import ingest
@@ -196,5 +197,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0
 
 
+def entrypoint() -> int:
+    """Load project configuration before running the installed CLI."""
+    load_project_env()
+    return main()
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(entrypoint())

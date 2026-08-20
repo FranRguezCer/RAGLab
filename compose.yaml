@@ -2,15 +2,15 @@ services:
   postgres:
     image: paradedb/paradedb:0.25.0-pg17
     environment:
-      POSTGRES_DB: raglab
-      POSTGRES_USER: raglab
-      POSTGRES_PASSWORD: raglab
+      POSTGRES_DB: ${POSTGRES_DB:-raglab}
+      POSTGRES_USER: ${POSTGRES_USER:-raglab}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-raglab}
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
       - raglab-paradedb:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U raglab -d raglab"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 12

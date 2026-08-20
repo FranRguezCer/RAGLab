@@ -125,6 +125,7 @@ source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e '.[dev,tokenizers,conversion,retrieval]'
 python -c "from transformers import AutoTokenizer; AutoTokenizer.from_pretrained('Qwen/Qwen3-Embedding-0.6B')"
+cp env.template .env
 docker compose up -d --wait
 ollama pull qwen3-embedding:0.6b
 ollama pull qwen3:4b
@@ -132,6 +133,14 @@ ollama pull qwen3:4b
 
 Run `ollama serve` in another terminal if Ollama is not already a system service. Compose exposes
 PostgreSQL only at `127.0.0.1:5432`.
+
+The three CLI commands automatically load the nearest `.env` from the current directory upward.
+Explicit CLI flags take priority over exported environment variables, which take priority over
+`.env`; internal defaults remain available when no `.env` exists. Docker Compose reads the same
+file. If you change `POSTGRES_DB`, `POSTGRES_USER`, or `POSTGRES_PASSWORD`, update the credentials
+and database name inside `RAGLAB_DSN` as well. The Ollama variables configure generation, and
+`RAGLAB_EMBEDDING_MODEL` must match the model stored in the selected collection. Vector dimension
+is fixed at 1024 by the current collection contract and database schema.
 
 ```bash
 raglab-ingest data/samples/aster_greenhouse_controller_manual.md \

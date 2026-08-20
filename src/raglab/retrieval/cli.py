@@ -10,6 +10,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+from raglab.config import load_project_env
 from raglab.embeddings import OllamaEmbeddingProvider
 from raglab.errors import RagLabError
 from raglab.retrieval.models import MetadataFilter, RetrievalConfig, RetrievalRequest
@@ -142,5 +143,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0
 
 
+def entrypoint() -> int:
+    """Load project configuration before running the installed CLI."""
+    load_project_env()
+    return main()
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(entrypoint())
