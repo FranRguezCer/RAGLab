@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from raglab.errors import EmbeddingError
+from raglab.ollama import validate_positive_duration
 
 
 class OllamaEmbeddingProvider:
@@ -18,16 +19,38 @@ class OllamaEmbeddingProvider:
         dimension: int = 1024,
         base_url: str = "http://127.0.0.1:11434",
         timeout: float = 120.0,
+        num_gpu: int | None = None,
+        num_ctx: int | None = None,
+        keep_alive: str | None = None,
     ) -> None:
         self.model = model
         self.dimension = dimension
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.num_gpu = num_gpu
+        self.num_ctx = num_ctx
+        self.keep_alive = (
+            validate_positive_duration(keep_alive) if keep_alive is not None else None
+        )
+        if num_gpu is not None and num_gpu < 0:
+            raise ValueError("num_gpu cannot be negative")
+        if num_ctx is not None and num_ctx < 1:
+            raise ValueError("num_ctx must be positive")
 
     def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
         if not texts:
             return []
-        payload = self._request("/api/embed", {"model": self.model, "input": list(texts)})
+        body: dict[str, Any] = {"model": self.model, "input": list(texts)}
+        options: dict[str, int] = {}
+        if self.num_gpu is not None:
+            options["num_gpu"] = self.num_gpu
+        if self.num_ctx is not None:
+            options["num_ctx"] = self.num_ctx
+        if options:
+            body["options"] = options
+        if self.keep_alive is not None:
+            body["keep_alive"] = self.keep_alive
+        payload = self._request("/api/embed", body)
         vectors = payload.get("embeddings")
         if not isinstance(vectors, list) or len(vectors) != len(texts):
             raise EmbeddingError("Ollama returned an unexpected number of embeddings")

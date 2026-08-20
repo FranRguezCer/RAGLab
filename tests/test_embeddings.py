@@ -46,3 +46,31 @@ def test_unreachable_ollama_has_actionable_error() -> None:
         pytest.raises(EmbeddingError, match="start Ollama"),
     ):
         client.embed_documents(["text"])
+
+
+def test_embedding_request_can_pin_model_to_cpu_with_positive_ttl() -> None:
+    client = StubOllama(dimension=2, num_gpu=0, num_ctx=4096, keep_alive="5m")
+    captured: dict[str, object] = {}
+
+    def request(path: str, body: dict[str, object] | None) -> dict[str, object]:
+        captured.update({"path": path, "body": body})
+        return {"embeddings": [[1.0, 2.0]]}
+
+    client._request = request  # type: ignore[method-assign]
+
+    assert client.embed_documents(["text"]) == [[1.0, 2.0]]
+    assert captured == {
+        "path": "/api/embed",
+        "body": {
+            "model": "qwen3-embedding:0.6b",
+            "input": ["text"],
+            "options": {"num_gpu": 0, "num_ctx": 4096},
+            "keep_alive": "5m",
+        },
+    }
+
+
+@pytest.mark.parametrize("ttl", ["-1m", "0h", "forever"])
+def test_embedding_rejects_non_positive_or_invalid_ttl(ttl: str) -> None:
+    with pytest.raises(ValueError, match="positive Ollama duration"):
+        OllamaEmbeddingProvider(keep_alive=ttl)
