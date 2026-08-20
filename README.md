@@ -286,9 +286,17 @@ Use a new collection because the profile is part of its immutable contract.
 
 ### `01_ingestion_and_indexing.ipynb`
 
-The guided notebook exposes conversion, AST blocks, structural units, chunk diagnostics,
-`content` versus `embedding_text`, final vectors, PostgreSQL rows, exact/vector diagnostics, and
-citations. The tracked Aster manual keeps observations repeatable.
+This 10–15 minute lab follows three checkpoints: source → canonical Markdown, Markdown → AST,
+and AST → indexable chunks. It uses the real converter, parser, and chunker against the tracked
+Aster manual, but needs neither PostgreSQL nor Ollama.
+
+```bash
+jupyter execute notebooks/01_ingestion_and_indexing.ipynb \
+  --output /tmp/raglab-ingestion-lab.ipynb
+```
+
+The optional appendix points to the service-backed ingestion CLI and the advanced benchmark when
+you are ready to inspect embeddings, PostgreSQL storage, HNSW, or a real PDF.
 
 ### `benchmark_ingestion_hyperparameters.ipynb`
 
@@ -302,17 +310,16 @@ per-collection ingestion flags.
 
 ## Optional real PDF: *Attention Is All You Need*
 
-Download the paper from arXiv and opt into the notebook appendix:
+Keep the short notebook hermetic. To ingest the paper through the real service boundaries, use
+the CLI instead:
 
 ```bash
 curl -L https://arxiv.org/pdf/1706.03762 -o attention.pdf
-export RAGLAB_PDF="$PWD/attention.pdf"
-jupyter execute notebooks/01_ingestion_and_indexing.ipynb \
-  --output /tmp/raglab-ingestion-attention.ipynb
+raglab-ingest attention.pdf --collection attention-paper
 ```
 
-The Aster corpus remains the controlled fixture; the paper provides a practical example for
-exploring real PDF conversion.
+The Aster corpus remains the controlled fixture; the paper is an optional service-backed
+experiment for real PDF conversion and indexing.
 
 # Chapter 2 — Hybrid retrieval
 
@@ -434,20 +441,17 @@ matched children, and ANN, BM25, RRF, reranker, and MMR traces.
 
 ## `02_retrieval.ipynb`
 
-This progressive playground first demonstrates pure ranking mechanics, then exposes editable
-query, collection, filters, history, and every `RetrievalConfig` value. Use it to observe BM25,
-ANN, RRF, BGE, small-to-big, and MMR.
-
-Live PostgreSQL, Ollama, and BGE execution is disabled by default:
+This 10–15 minute lab follows three checkpoints: compare semantic and BM25 rankings, fuse them
+with RRF, and inspect the final citable evidence. It uses RAGLab's real ranking and retrieval
+contracts with deterministic data, so PostgreSQL, Ollama, and BGE are not required.
 
 ```bash
-export RAGLAB_RUN_RETRIEVAL_NOTEBOOK=1
-export RAGLAB_RETRIEVAL_COLLECTION=greenhouse-manuals
 jupyter execute notebooks/02_retrieval.ipynb \
-  --output /tmp/raglab-retrieval-live.ipynb
+  --output /tmp/raglab-retrieval-lab.ipynb
 ```
 
-Without that variable, the full notebook still executes its hermetic examples.
+The optional appendix directs service-backed experiments—rewriting, reranking, filters,
+small-to-big expansion, and MMR—to `raglab-retrieve` after a collection has been indexed.
 
 # Chapter 3 — Strict RAG generation
 
@@ -625,39 +629,21 @@ raglab-generate "Summarize the recovery procedure" \
 
 ## `03_generation.ipynb`
 
-The notebook uses package contracts and small deterministic adapters to run hermetically by
-default. It demonstrates single-pass generation, citation rejection, source shortfall, and forced
-hierarchical fallback without duplicating pipeline logic.
-
-Enable the final live section only after ingesting a compatible collection. It reuses one
-`GenerationPipeline` for a grounded E17 question and a Wi-Fi question that the manual cannot
-answer.
-
-For an interactive notebook session, change the assignment in the final code cell:
-
-```python
-RAGLAB_RUN_GENERATION_NOTEBOOK = "1"
-```
-
-For command-line execution, enable the same section through the environment:
+This 10–15 minute lab follows three checkpoints: create grounded evidence, generate a validated
+cited answer, and prove that an invented citation fails closed. A deterministic model adapter
+drives the real `GenerationPipeline`, so the main path needs neither Ollama nor PostgreSQL.
 
 ```bash
-export RAGLAB_RUN_GENERATION_NOTEBOOK=1
-export RAGLAB_GENERATION_COLLECTION=greenhouse-manuals
-export RAGLAB_GENERATION_QUERY='What causes fault E17, and how should it be resolved?'
-export RAGLAB_GENERATION_UNANSWERABLE_QUERY='According to the Aster manual, what is the default Wi-Fi password? If the sources do not state one, abstain.'
 jupyter execute notebooks/03_generation.ipynb \
-  --output /tmp/raglab-generation-live.ipynb
+  --output /tmp/raglab-generation-lab.ipynb
 ```
 
-The live output includes each question, answer, abstention flag, strategy, citations, and the full
-content of every retrieved result. The assertions require a cited E17 answer and abstention for the
-Wi-Fi question. Citation validation proves that source IDs are traceable; inspect the displayed
-evidence to decide whether it semantically supports each claim.
+The optional appendix directs live local generation, source-shortfall experiments, and
+hierarchical synthesis to `raglab-generate` after a compatible collection has been indexed.
 
-Without either switch, the full notebook remains executable without PostgreSQL or Ollama. If
-`raglab-generate` is missing after pulling a version that added the command, refresh the existing
-editable install without resolving project dependencies again:
+The service-backed CLI output includes the answer, abstention flag, strategy, citations, and full
+retrieved evidence. If `raglab-generate` is missing after pulling a version that added the command,
+refresh the existing editable install without resolving project dependencies again:
 
 ```bash
 python -m pip install -e . --no-deps
@@ -791,25 +777,22 @@ schema is exported as `raglab.evaluation.RUN_JSON_SCHEMA`; application integrati
 
 ## `04_rag_evaluation.ipynb`
 
-The fourth laboratory imports the same `EvaluationApplication` and manifest loader used by the
-CLI. It does not shell out. By default it runs a complete hermetic baseline/candidate lesson,
-shows ground truth and multi-turn cases, computes deterministic metrics, and explains the
-conservative verdict without PostgreSQL or Ollama.
+This 10–15 minute lab follows three checkpoints: inspect the shared manifest, run a hermetic
+baseline and candidate, then compare and promote deliberately. It imports the same
+`EvaluationApplication` and manifest loader as the CLI, without PostgreSQL, Ollama, or a
+subprocess.
 
 Execute the tracked output-free notebook into `/tmp`:
 
 ```bash
 jupyter execute notebooks/04_rag_evaluation.ipynb \
-  --output /tmp/raglab-evaluation.ipynb
+  --output /tmp/raglab-evaluation-lab.ipynb
 ```
 
-Enable its final real core section explicitly. The resulting run JSON and Markdown remain outside
-the repository under `/tmp/raglab-evaluation-artifacts/`:
+The optional appendix leaves the authoritative service-backed run to the CLI:
 
 ```bash
-RAGLAB_RUN_EVALUATION_NOTEBOOK=1 \
-jupyter execute notebooks/04_rag_evaluation.ipynb \
-  --output /tmp/raglab-evaluation-live.ipynb
+raglab-evaluate run --profile core
 ```
 
 # Appendix A — Test strategy and suite
