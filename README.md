@@ -611,17 +611,40 @@ The notebook uses package contracts and small deterministic adapters to run herm
 default. It demonstrates single-pass generation, citation rejection, source shortfall, and forced
 hierarchical fallback without duplicating pipeline logic.
 
-Enable the final live cell only after ingesting a compatible collection:
+Enable the final live section only after ingesting a compatible collection. It reuses one
+`GenerationPipeline` for a grounded E17 question and a Wi-Fi question that the manual cannot
+answer.
+
+For an interactive notebook session, change the assignment in the final code cell:
+
+```python
+RAGLAB_RUN_GENERATION_NOTEBOOK = "1"
+```
+
+For command-line execution, enable the same section through the environment:
 
 ```bash
 export RAGLAB_RUN_GENERATION_NOTEBOOK=1
 export RAGLAB_GENERATION_COLLECTION=greenhouse-manuals
 export RAGLAB_GENERATION_QUERY='What causes fault E17, and how should it be resolved?'
+export RAGLAB_GENERATION_UNANSWERABLE_QUERY='According to the Aster manual, what is the default Wi-Fi password? If the sources do not state one, abstain.'
 jupyter execute notebooks/03_generation.ipynb \
   --output /tmp/raglab-generation-live.ipynb
 ```
 
-Without the switch, the full notebook remains executable without PostgreSQL or Ollama.
+The live output includes each question, answer, abstention flag, strategy, citations, and the full
+content of every retrieved result. The assertions require a cited E17 answer and abstention for the
+Wi-Fi question. Citation validation proves that source IDs are traceable; inspect the displayed
+evidence to decide whether it semantically supports each claim.
+
+Without either switch, the full notebook remains executable without PostgreSQL or Ollama. If
+`raglab-generate` is missing after pulling a version that added the command, refresh the existing
+editable install without resolving project dependencies again:
+
+```bash
+python -m pip install -e . --no-deps
+raglab-generate --help
+```
 
 # Appendix A — Test strategy and suite
 
