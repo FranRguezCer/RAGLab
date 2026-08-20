@@ -3,14 +3,16 @@
 RAGLab is a local-first, inspectable laboratory for learning **Retrieval-Augmented Generation
 (RAG)** from first principles. RAG retrieves source evidence before a language model answers,
 reducing reliance on the model's internal memory and making citations possible. This repository
-teaches the two foundations that determine whether that evidence is useful:
+teaches the three stages that determine whether an answer is trustworthy:
 
 1. **ingestion and indexing** — convert sources into faithful, searchable units; and
-2. **hybrid retrieval** — combine semantic and lexical search, then refine the evidence.
+2. **hybrid retrieval** — combine semantic and lexical search, then refine the evidence; and
+3. **strict generation** — answer only from retrieved evidence and validate every citation.
 
 The components remain explicit. There is no LangChain or LlamaIndex layer hiding conversion,
-chunking, ranking, SQL, or failure modes. Ollama runs embeddings and optional query rewriting
-locally; Docling converts complex files locally; PostgreSQL stores the inspectable artifacts.
+chunking, ranking, generation, SQL, or failure modes. Ollama runs embeddings, optional query
+rewriting, and generation locally; Docling converts complex files locally; PostgreSQL stores the
+inspectable artifacts.
 Jina Reader is available only as an explicit opt-in for public URLs.
 
 ## Learning path
@@ -22,7 +24,9 @@ Jina Reader is available only as an explicit opt-in for public URLs.
 | 3 | `notebooks/01_ingestion_and_indexing.ipynb` | Inspect every ingestion artifact |
 | 4 | [Chapter 2](#chapter-2--hybrid-retrieval) | ANN, BM25, RRF, reranking, expansion, and MMR |
 | 5 | `notebooks/02_retrieval.ipynb` | Change a query and observe every retrieval stage |
-| 6 | [Appendix A](#appendix-a--test-strategy-and-suite) | Prove each system boundary |
+| 6 | [Chapter 3](#chapter-3--strict-rag-generation) | Generate cited answers without dropping evidence |
+| 7 | `notebooks/03_generation.ipynb` | Compare single-pass and hierarchical generation |
+| 8 | [Appendix A](#appendix-a--test-strategy-and-suite) | Prove each system boundary |
 
 The tracked fictional **Aster Greenhouse Controller Manual** provides a controlled corpus with
 known boundaries and answer anchors. For a real-world example, search arXiv for the well-known
@@ -44,6 +48,12 @@ flowchart LR
     ANN --> RANK["Fusion + refinement"]
     BM25 --> RANK
     RANK --> EVIDENCE["Faithful content + citation + ranking trace"]
+    EVIDENCE --> PLAN{"Complete sources fit?"}
+    PLAN -->|Yes| SINGLE["Single-pass synthesis"]
+    PLAN -->|No| HIER["Hierarchical extraction + synthesis"]
+    SINGLE --> VALIDATE["Strict citation validation"]
+    HIER --> VALIDATE
+    VALIDATE --> ANSWER["JSON answer + sources + original retrieval"]
 ```
 
 An **AST (Abstract Syntax Tree)** represents Markdown as typed blocks such as headings,
@@ -117,6 +127,7 @@ python -m pip install -e '.[dev,tokenizers,conversion,retrieval]'
 python -c "from transformers import AutoTokenizer; AutoTokenizer.from_pretrained('Qwen/Qwen3-Embedding-0.6B')"
 docker compose up -d --wait
 ollama pull qwen3-embedding:0.6b
+ollama pull qwen3:4b
 ```
 
 Run `ollama serve` in another terminal if Ollama is not already a system service. Compose exposes
@@ -127,6 +138,9 @@ raglab-ingest data/samples/aster_greenhouse_controller_manual.md \
   --collection greenhouse-manuals
 
 raglab-retrieve "What causes fault E17?" \
+  --collection greenhouse-manuals
+
+raglab-generate "What causes fault E17, and how should it be resolved?" \
   --collection greenhouse-manuals
 ```
 
@@ -415,11 +429,202 @@ jupyter execute notebooks/02_retrieval.ipynb \
 
 Without that variable, the full notebook still executes its hermetic examples.
 
+# Chapter 3 — Strict RAG generation
+
+Generation completes the path from source to answer. `raglab-generate` performs one typed
+`RetrievalPipeline` call, gives the resulting evidence to a local LLM, validates the model's JSON,
+and returns the **original retrieval response** alongside the answer. It never shells out to
+`raglab-retrieve` and never asks the model to reconstruct retrieval metadata.
+
+## The grounding contract
+
+RAGLab treats grounding as a checked boundary, not just a prompt instruction.
+
+The Ollama request sends trusted policy through the dedicated `system` field. The question,
+retrieval metadata, and source content remain untrusted user data in `prompt`; source text cannot
+replace the system policy merely by containing instruction-like prose.
+
+| Contract | Enforced behavior |
+| -------- | ----------------- |
+| Evidence | The model may use only complete `RetrievalResult.content` values. |
+| Inline citations | Supported claims use stable IDs such as `[S1]` and `[S2]`. |
+| Structured citations | `cited_source_ids` must match the inline IDs exactly. |
+| Known sources | Every ID must refer to a result from this retrieval call. |
+| Non-abstaining answer | At least one valid citation is required. |
+| Insufficient evidence | The model must set `abstained: true`; an empty retrieval abstains without calling the LLM. |
+
+Unknown IDs, mismatched inline and structured citations, invalid JSON, or an uncited
+non-abstaining answer fail closed with `GenerationError`. Validation proves traceability; it does
+not claim that an LLM can independently prove the semantic truth of every sentence.
+
+The response is JSON by default and contains:
+
+```json
+{
+  "answer": "Fault E17 indicates ... [S1]",
+  "abstained": false,
+  "sources": [
+    {
+      "id": "S1",
+      "retrieval_result_id": "...",
+      "document_id": "...",
+      "citation": {"source_name": "manual.md", "start_line": 42}
+    }
+  ],
+  "retrieval": {"query": "...", "results": []},
+  "strategy": "single_pass",
+  "source_shortfall": false,
+  "minimum_sources": 5,
+  "source_count": 5,
+  "metrics": {"model_calls": 1, "estimated_prompt_tokens": 1800}
+}
+```
+
+The abbreviated nested objects above show the shape, not a literal complete response. The real
+`retrieval` value preserves queries, filters, complete results, citations, parent ranges, matched
+children, and ranking traces.
+
+## Keep every available source
+
+Generation requests at least five final results even if a lower `--top-k` is supplied. When five
+or more results exist, at least five complete candidates reach the generation planner. When the
+filtered collection contains fewer, RAGLab uses every available result and sets
+`source_shortfall: true`; it does not invent filler sources or abstain merely because the count is
+below five.
+
+```mermaid
+flowchart TD
+    QUERY["One question"] --> RETRIEVE["Typed RetrievalPipeline"]
+    RETRIEVE --> CHECK["Validate collection model + dimension"]
+    CHECK --> SOURCES["Stable S1..Sn over complete results"]
+    SOURCES --> FIT{"System prompt + all sources + output reserve fit num_ctx?"}
+    FIT -->|Yes| SINGLE["Single-pass cited synthesis"]
+    FIT -->|No| BATCH["Sequential complete-source batches"]
+    BATCH --> FACTS["Validate source-linked facts per batch"]
+    FACTS --> SYNTH["Final cited synthesis"]
+    SINGLE --> GUARD["Validate JSON and citations"]
+    SYNTH --> GUARD
+    GUARD --> JSON["Answer + sources + strategy + original retrieval"]
+```
+
+`single_pass` is the shortest path. Its conservative planner budgets the separate system policy,
+user prompt, JSON Schema, Qwen `/no_think` control when applicable, output reserve, and a template
+margin—not just source bytes. If the complete invocation would exceed `num_ctx`, `hierarchical`
+groups complete candidates into sequential extraction calls, validates that every fact refers
+only to its batch IDs, and synthesizes from those source-linked facts. Source IDs stay stable end
+to end.
+
+If an extraction exhausts `num_predict`, the fallback recursively splits that batch and retries;
+it never silently accepts a partial response. If the first fact layer still cannot fit final
+synthesis, bounded reduction rounds compress source-linked fact groups and recheck the complete
+invocation budget at every level. Lack of progress, a single oversized source/fact, or final
+synthesis exhaustion fails explicitly. The planner does **not** truncate evidence to force it
+through. A length-limited single-pass attempt enters the same hierarchical path, and the failed
+attempt remains visible in call/token metrics.
+
+## Validated 8 GB local profile
+
+The default was exercised on an NVIDIA RTX 3060 Ti with 8192 MiB VRAM and 15 GiB system RAM.
+
+| Component | Default placement and budget |
+| --------- | ---------------------------- |
+| Query embedding | `qwen3-embedding:0.6b`, Ollama `num_gpu=0`, `num_ctx=4096` |
+| Generation | `qwen3:4b` on GPU, `num_ctx=12288`, `num_predict=512` |
+| Calls | One at a time; `parallelism=1` |
+| Residency | Positive `keep_alive` TTL, default `5m`; at most these two Ollama models resident |
+
+The measured CPU-embedding plus 12K-generation profile used about 5804 MiB VRAM, left about
+2221 MiB free, used no swap, and unloaded both models after their TTL. These figures are a
+validated baseline, not a universal guarantee: drivers, Ollama versions, context contents, and
+other GPU processes change memory use.
+
+Do not use `keep_alive=0` for this workflow. Ollama 0.13.2 under the tested WSL environment
+reported no resident model while VRAM remained occupied until the service restarted. A positive
+TTL produced reliable unloading. When diagnosing memory, inspect `nvidia-smi` as well as
+`ollama ps`.
+
+## Embedding compatibility comes before generation
+
+Collections persist their embedding model and dimension. `raglab-generate` checks both before it
+embeds the query. `--embedding-model` is therefore an experiment control, not permission to query
+vectors created in a different vector space. A mismatch fails with an instruction to reindex into
+a compatible collection. The current PostgreSQL schema remains fixed at 1024 dimensions.
+
+## `raglab-generate` reference
+
+Only `query` is required. Retrieval flags retain their Chapter 2 meaning; generation raises
+`top_k` and `candidate_k` as needed to honor `--minimum-sources`.
+
+| Parameter | Default | Meaning |
+| --------- | ------- | ------- |
+| `query` | Required | One question; this version is not a persistent chat session. |
+| `--collection` | `documents` | Indexed evidence boundary. |
+| `--dsn` | `RAGLAB_DSN`, else Compose DSN | Read-only retrieval connection. |
+| `--filter` | None | Repeatable typed prefilter shared by ANN, BM25, and expansion. |
+| `--candidate-k` | `50` | Per-channel retrieval candidates; raised to the final source minimum if needed. |
+| `--top-k` | `5` | Requested final results; raised to `minimum-sources` if lower. |
+| `--minimum-sources` | `5` | Minimum requested when the collection and filters can supply it. |
+| `--ef-search` | `100` | HNSW search breadth. |
+| `--exact` | Disabled | Exact semantic search for diagnostics. |
+| `--rewrite`, `--expansions` | Disabled, `0` | Optional standalone query and up to two expansions. |
+| `--history-file` | None | JSON strings or message objects used only to disambiguate this one retrieval query. |
+| `--no-rerank`, `--no-mmr`, `--no-small-to-big` | Disabled | Disable one retrieval refinement stage. |
+| `--mmr-lambda` | `0.7` | Relevance/diversity balance. |
+| `--parent-max-tokens` | `1500` | Complete dynamic-parent budget. |
+| `--model` | `RAGLAB_GENERATION_MODEL`, else `qwen3:4b` | Ollama generation model. |
+| `--embedding-model` | `RAGLAB_EMBEDDING_MODEL`, else `qwen3-embedding:0.6b` | Must match the collection contract. |
+| `--ollama-base-url` | `RAGLAB_OLLAMA_BASE_URL`, else local Ollama | Ollama API root. |
+| `--num-ctx` | `RAGLAB_NUM_CTX`, else `12288` | Generation context window. |
+| `--num-predict` | `512` | Maximum output tokens reserved by the planner. |
+| `--keep-alive` | `RAGLAB_KEEP_ALIVE`, else `5m` | Positive Ollama residency TTL. |
+
+The generation adapter sends the grounding policy through Ollama's `system` field, uses
+`think=false`, supplies an explicit JSON Schema, adds `/no_think` for Qwen models, and rejects
+responses whose `done_reason` is not `stop`. A `length` termination is a typed signal used by the
+hierarchical split/reduction path rather than malformed JSON being accepted.
+
+```bash
+raglab-generate "What causes fault E17, and what action resolves it?" \
+  --collection greenhouse-manuals
+
+raglab-generate "Which one requires replacing the sensor?" \
+  --collection greenhouse-manuals \
+  --history-file ./history.json \
+  --rewrite
+
+# Model experiment: only valid for a collection indexed with the same embedding model.
+RAGLAB_GENERATION_MODEL=qwen3:4b \
+RAGLAB_EMBEDDING_MODEL=qwen3-embedding:0.6b \
+RAGLAB_NUM_CTX=12288 \
+RAGLAB_KEEP_ALIVE=5m \
+raglab-generate "Summarize the recovery procedure" \
+  --collection greenhouse-manuals \
+  --no-rerank
+```
+
+## `03_generation.ipynb`
+
+The notebook uses package contracts and small deterministic adapters to run hermetically by
+default. It demonstrates single-pass generation, citation rejection, source shortfall, and forced
+hierarchical fallback without duplicating pipeline logic.
+
+Enable the final live cell only after ingesting a compatible collection:
+
+```bash
+export RAGLAB_RUN_GENERATION_NOTEBOOK=1
+export RAGLAB_GENERATION_COLLECTION=greenhouse-manuals
+export RAGLAB_GENERATION_QUERY='What causes fault E17, and how should it be resolved?'
+jupyter execute notebooks/03_generation.ipynb \
+  --output /tmp/raglab-generation-live.ipynb
+```
+
+Without the switch, the full notebook remains executable without PostgreSQL or Ollama.
+
 # Appendix A — Test strategy and suite
 
 The pyramid keeps algorithmic feedback fast and reserves real converters, databases, models, and
-PDFs for explicit boundaries. The suite collects **76 tests**. The validated ordinary run produces
-**72 passed and 4 skipped**; skips are environment-dependent integration or E2E cases.
+PDFs for explicit boundaries. The suite collects **112 tests**. The validated ordinary run
+produces **108 passed and 4 skipped**; skips are environment-dependent integration or E2E cases.
 
 ## Levels
 
@@ -485,6 +690,8 @@ jupyter execute notebooks/01_ingestion_and_indexing.ipynb \
   --output /tmp/raglab-ingestion.ipynb
 jupyter execute notebooks/02_retrieval.ipynb \
   --output /tmp/raglab-retrieval.ipynb
+jupyter execute notebooks/03_generation.ipynb \
+  --output /tmp/raglab-generation.ipynb
 jupyter execute notebooks/benchmark_ingestion_hyperparameters.ipynb \
   --output /tmp/raglab-benchmark.ipynb
 ```
@@ -505,6 +712,7 @@ collections. Never aim destructive fixtures at production.
 | Rewriting and history | `tests/test_retrieval_rewriting.py`, `tests/test_retrieval_cli.py` |
 | BGE reranking | `tests/test_retrieval_reranking.py` |
 | Retrieval orchestration | `tests/test_retrieval_pipeline.py`, `tests/e2e/test_hybrid_retrieval.py` |
+| Generation, citations, fallback, and CLI | `tests/test_generation.py`, `tests/test_generation_ollama.py`, `tests/test_generation_cli.py` |
 
 # Appendix B — BGE reranker OOM incident
 
@@ -598,7 +806,7 @@ docker compose exec postgres psql -U raglab -d raglab -c \
 | ----- | -------- | ------ |
 | 01 | `01_ingestion_and_indexing.ipynb` | Implemented |
 | 02 | `02_retrieval.ipynb` | Implemented |
-| 03 | `03_generation.ipynb` | Planned |
+| 03 | `03_generation.ipynb` | Implemented |
 | 04 | `04_rag_evaluation.ipynb` | Planned |
 
-Generation should consume `result.content` with `result.citation`, never `embedding_text`.
+Generation consumes `result.content` with `result.citation`, never `embedding_text`.
