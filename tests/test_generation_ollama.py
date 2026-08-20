@@ -36,7 +36,11 @@ def test_ollama_uses_schema_no_think_context_and_positive_ttl() -> None:
     assert client.body["think"] is False
     assert client.body["format"] is schema
     assert client.body["keep_alive"] == "5m"
-    assert client.body["options"] == {"num_ctx": 12288, "num_predict": 512}
+    assert client.body["options"] == {
+        "num_ctx": 12288,
+        "num_predict": 512,
+        "temperature": 0,
+    }
     assert result.prompt_tokens == 12
 
 

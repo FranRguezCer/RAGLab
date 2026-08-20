@@ -46,18 +46,15 @@ _REDUCTION_SYSTEM = (
     "that supports each retained claim. Return only JSON matching the supplied schema."
 )
 
-def _answer_schema(allowed: Iterable[str]) -> dict[str, Any]:
+
+def _answer_schema() -> dict[str, Any]:
     return {
         "type": "object",
         "properties": {
             "answer": {"type": "string", "maxLength": 1800},
             "abstained": {"type": "boolean"},
-            "cited_source_ids": {
-                "type": "array",
-                "items": {"type": "string", "enum": list(allowed)},
-            },
         },
-        "required": ["answer", "abstained", "cited_source_ids"],
+        "required": ["answer", "abstained"],
         "additionalProperties": False,
     }
 
@@ -139,7 +136,7 @@ class GenerationPipeline:
 
         calls: tuple[ModelInvocation, ...]
         prompt = self._answer_prompt(retrieval.rewritten_query or retrieval.query, sources)
-        answer_schema = _answer_schema(source.id for source in sources)
+        answer_schema = _answer_schema()
         if self._fits(_ANSWER_SYSTEM, prompt, answer_schema, request):
             single_estimate = self._estimate_invocation_tokens(
                 _ANSWER_SYSTEM, prompt, answer_schema, request
@@ -235,7 +232,7 @@ class GenerationPipeline:
         calls.extend(reduction_calls)
         estimated += reduction_estimate
         final_prompt = self._synthesis_prompt(query, facts, sources)
-        answer_schema = _answer_schema(source.id for source in sources)
+        answer_schema = _answer_schema()
         estimated += self._estimate_invocation_tokens(
             _ANSWER_SYSTEM, final_prompt, answer_schema, request
         )
@@ -307,7 +304,7 @@ class GenerationPipeline:
         estimated = 0
         for _round in range(_MAX_REDUCTION_ROUNDS + 1):
             final_prompt = self._synthesis_prompt(query, facts, sources)
-            answer_schema = _answer_schema(source.id for source in sources)
+            answer_schema = _answer_schema()
             if self._fits(_ANSWER_SYSTEM, final_prompt, answer_schema, request):
                 return facts, calls, estimated
             if _round == _MAX_REDUCTION_ROUNDS or not facts:
@@ -483,22 +480,12 @@ class GenerationPipeline:
     ) -> tuple[str, bool, tuple[str, ...]]:
         answer = payload.get("answer")
         abstained = payload.get("abstained")
-        raw_ids = payload.get("cited_source_ids")
-        if (
-            not isinstance(answer, str)
-            or not answer.strip()
-            or not isinstance(abstained, bool)
-            or not isinstance(raw_ids, list)
-            or not all(isinstance(value, str) for value in raw_ids)
-        ):
+        if not isinstance(answer, str) or not answer.strip() or not isinstance(abstained, bool):
             raise GenerationError("Generation violated its JSON response contract")
-        cited_ids = tuple(dict.fromkeys(raw_ids))
-        inline_ids = tuple(dict.fromkeys(f"S{value}" for value in _CITATION.findall(answer)))
+        cited_ids = tuple(dict.fromkeys(f"S{value}" for value in _CITATION.findall(answer)))
         allowed = {source.id for source in sources}
-        if not set(cited_ids) <= allowed or not set(inline_ids) <= allowed:
+        if not set(cited_ids) <= allowed:
             raise GenerationError("Generation cited an unknown source")
-        if set(cited_ids) != set(inline_ids):
-            raise GenerationError("Inline citations and cited_source_ids do not match")
         if not abstained and not cited_ids:
             raise GenerationError("A non-abstaining answer must cite retrieved evidence")
         return answer.strip(), abstained, cited_ids

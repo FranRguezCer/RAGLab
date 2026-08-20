@@ -460,14 +460,15 @@ replace the system policy merely by containing instruction-like prose.
 | -------- | ----------------- |
 | Evidence | The model may use only complete `RetrievalResult.content` values. |
 | Inline citations | Supported claims use stable IDs such as `[S1]` and `[S2]`. |
-| Structured citations | `cited_source_ids` must match the inline IDs exactly. |
+| Structured sources | `sources` are derived from validated inline citation IDs in first-appearance order. |
 | Known sources | Every ID must refer to a result from this retrieval call. |
 | Non-abstaining answer | At least one valid citation is required. |
 | Insufficient evidence | The model must set `abstained: true`; an empty retrieval abstains without calling the LLM. |
 
-Unknown IDs, mismatched inline and structured citations, invalid JSON, or an uncited
-non-abstaining answer fail closed with `GenerationError`. Validation proves traceability; it does
-not claim that an LLM can independently prove the semantic truth of every sentence.
+The model generates only `answer` and `abstained`; it does not regenerate a parallel source-ID
+list. Unknown inline IDs, invalid JSON, or an uncited non-abstaining answer fail closed with
+`GenerationError`. Validation proves traceability; it does not claim that an LLM can independently
+prove the semantic truth of every sentence.
 
 The response is JSON by default and contains:
 
