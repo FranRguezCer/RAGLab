@@ -16,6 +16,7 @@ dependencies = [
 [project.scripts]
 raglab-ingest = "raglab.cli:main"
 raglab-retrieve = "raglab.retrieval.cli:main"
+raglab-generate = "raglab.generation.cli:main"
 
 [project.optional-dependencies]
 conversion = ["docling>=2,<3", "easyocr>=1.7,<2"]

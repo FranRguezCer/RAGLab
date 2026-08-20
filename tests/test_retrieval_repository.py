@@ -90,6 +90,46 @@ def test_lexical_search_uses_paradedb_025_operator_and_score(
     assert "ch.content ||| %s" in executed[0]
 
 
+def test_collection_metadata_exposes_embedding_compatibility(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executed: list[tuple[str, object]] = []
+
+    class Cursor:
+        def __enter__(self) -> Cursor:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def execute(self, sql: str, params: object) -> None:
+            executed.append((sql, params))
+
+        def fetchone(self) -> tuple[object, ...]:
+            return ("manuals", "qwen3-embedding:0.6b", 1024)
+
+    class Connection:
+        def cursor(self) -> Cursor:
+            return Cursor()
+
+    class Context:
+        def __enter__(self) -> Connection:
+            return Connection()
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    repository = PostgresRetrievalRepository("unused")
+    monkeypatch.setattr(repository, "_connect", lambda: Context())
+
+    metadata = repository.collection_metadata("manuals")
+
+    assert metadata is not None
+    assert metadata.embedding_model == "qwen3-embedding:0.6b"
+    assert metadata.embedding_dimension == 1024
+    assert executed[0][1] == ("manuals",)
+
+
 @pytest.mark.parametrize(
     ("field", "operator", "value"),
     [

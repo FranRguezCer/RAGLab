@@ -92,6 +92,13 @@ class RetrievalRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class CollectionMetadata:
+    name: str
+    embedding_model: str
+    embedding_dimension: int
+
+
+@dataclass(frozen=True, slots=True)
 class QueryRewrite:
     standalone_query: str
     expansions: tuple[str, ...] = ()

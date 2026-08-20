@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 
 from raglab.contracts import Citation
 from raglab.retrieval.models import (
+    CollectionMetadata,
     NeighborChunk,
     QueryEmbeddingProvider,
     QueryRewriter,
@@ -53,6 +54,9 @@ class RetrievalPipeline:
         self.embedding_provider = embedding_provider
         self.rewriter = rewriter
         self.reranker = reranker or BGEReranker()
+
+    def collection_metadata(self, collection: str) -> CollectionMetadata | None:
+        return self.repository.collection_metadata(collection)
 
     def retrieve(self, request: RetrievalRequest) -> RetrievalResponse:
         config = request.config

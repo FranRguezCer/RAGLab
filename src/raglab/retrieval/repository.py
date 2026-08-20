@@ -9,7 +9,12 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from raglab.contracts import Citation, ProvenanceStatus
 from raglab.errors import StorageError
-from raglab.retrieval.models import MetadataFilter, NeighborChunk, RetrievedChunk
+from raglab.retrieval.models import (
+    CollectionMetadata,
+    MetadataFilter,
+    NeighborChunk,
+    RetrievedChunk,
+)
 
 if TYPE_CHECKING:
     from psycopg import Connection
@@ -88,6 +93,8 @@ def _escape_like(value: str) -> str:
 
 
 class RetrievalRepository(Protocol):
+    def collection_metadata(self, collection: str) -> CollectionMetadata | None: ...
+
     def semantic_search(
         self,
         collection: str,
@@ -118,6 +125,17 @@ class PostgresRetrievalRepository:
 
     def __init__(self, dsn: str) -> None:
         self.dsn = dsn
+
+    def collection_metadata(self, collection: str) -> CollectionMetadata | None:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT name, model, dimension FROM collections WHERE name = %s",
+                (collection,),
+            )
+            row = cursor.fetchone()
+        if row is None:
+            return None
+        return CollectionMetadata(str(row[0]), str(row[1]), int(row[2]))
 
     @contextmanager
     def _connect(self) -> Iterator[Connection[Any]]:

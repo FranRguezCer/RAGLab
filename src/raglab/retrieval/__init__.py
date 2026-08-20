@@ -1,6 +1,7 @@
 """Independent hybrid retrieval API."""
 
 from raglab.retrieval.models import (
+    CollectionMetadata,
     MetadataFilter,
     NeighborChunk,
     QueryEmbeddingProvider,
@@ -26,6 +27,7 @@ from raglab.retrieval.rewriting import OllamaQueryRewriter
 
 __all__ = [
     "BGEReranker",
+    "CollectionMetadata",
     "MetadataFilter",
     "NeighborChunk",
     "OllamaQueryRewriter",
