@@ -119,6 +119,26 @@ class PostgresRepository:
             "token_count": row[5],
         }
 
+    def list_collections(self) -> list[CollectionConfig]:
+        """Return collection contracts in deterministic display order."""
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """SELECT name, model, dimension, metric, chunk_config
+                   FROM collections
+                   ORDER BY name"""
+            )
+            rows = cursor.fetchall()
+        return [
+            CollectionConfig(
+                name=row[0],
+                model=row[1],
+                dimension=row[2],
+                metric=row[3],
+                chunk_config=row[4],
+            )
+            for row in rows
+        ]
+
     def current_document_id(
         self,
         config: CollectionConfig,

@@ -233,18 +233,21 @@ enforce tenant access separately.
 
 ## `raglab-ingest` reference
 
-Only `source` is required. The CLI is a thin adapter over the public pipeline used by tests and
-notebooks.
+Only `source` is positional. In a terminal, omitting `--collection` lists the existing collections
+and prompts for an existing or new name. Scripts and redirected input must pass `--collection`
+explicitly, preventing accidental creation of a `documents` collection. Selecting an existing
+collection reuses its stored embedding and chunking contract; incompatible explicit chunk flags
+fail before ingestion.
 
 | Parameter | Default | Meaning, range, and tradeoff |
 | --------- | ------- | ---------------------------- |
 | `source` | Required | Local path or public HTTP(S) URL. Local paths resolve to stable absolute URIs. |
-| `--collection` | `documents` | Search boundary. Reuse only with a compatible contract. |
+| `--collection` | Interactive prompt; required without a TTY | Existing search boundary or the name of a new collection. |
 | `--dsn` | `RAGLAB_DSN`, else `postgresql://raglab:raglab@127.0.0.1:5432/raglab` | PostgreSQL connection string. |
-| `--target-tokens` | `512` | Preferred size. Larger chunks add context but reduce precision. |
-| `--min-tokens` | `120` | Minimum preferred size. Raising it reduces fragments but can merge ideas. |
-| `--max-tokens` | `768` | Upper chunk target. Raising it increases context and embedding cost. |
-| `--semantic-percentile` | `90` | Lower values split more often; higher values require stronger evidence. |
+| `--target-tokens` | Stored value; new collection: `512` | Preferred size. Larger chunks add context but reduce precision. |
+| `--min-tokens` | Stored value; new collection: `120` | Minimum preferred size. Raising it reduces fragments but can merge ideas. |
+| `--max-tokens` | Stored value; new collection: `768` | Upper chunk target. Raising it increases context and embedding cost. |
+| `--semantic-percentile` | Stored value; new collection: `90` | Lower values split more often; higher values require stronger evidence. |
 | internal overlap | `0` | Fixed default; avoids duplicated evidence. |
 | `--use-jina` | Disabled | Sends a public URL to Jina Reader; never automatic and rejects local/private targets. |
 | `-h`, `--help` | Disabled | Print parser help and exit. |
@@ -623,8 +626,8 @@ Without the switch, the full notebook remains executable without PostgreSQL or O
 # Appendix A — Test strategy and suite
 
 The pyramid keeps algorithmic feedback fast and reserves real converters, databases, models, and
-PDFs for explicit boundaries. The suite collects **112 tests**. The validated ordinary run
-produces **108 passed and 4 skipped**; skips are environment-dependent integration or E2E cases.
+PDFs for explicit boundaries. The suite collects **121 tests**. The validated ordinary run
+produces **117 passed and 4 skipped**; skips are environment-dependent integration or E2E cases.
 
 ## Levels
 

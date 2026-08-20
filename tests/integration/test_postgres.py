@@ -78,6 +78,12 @@ def test_migration_idempotency_view_and_search() -> None:
         "chunk_count": 1,
         "token_count": 1,
     }
+    collection_configs = repository.list_collections()
+    assert [item.name for item in collection_configs] == sorted(
+        item.name for item in collection_configs
+    )
+    listed = {item.name: item for item in collection_configs}
+    assert listed[config.name] == config
 
     changed = ConvertedDocument(
         source_uri,
