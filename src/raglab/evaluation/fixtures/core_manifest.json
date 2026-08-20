@@ -1,0 +1,224 @@
+{
+  "schema_version": 1,
+  "profile": "core",
+  "config": {
+    "chunking": {
+      "semantic_percentile": 85
+    },
+    "retrieval": {
+      "candidate_k": 50,
+      "top_k": 5
+    },
+    "generation_repetitions": 3
+  },
+  "sources": [
+    {
+      "id": "aster-manual",
+      "path": "core/aster_greenhouse_controller_manual.md"
+    },
+    {
+      "id": "harbor-edge-cache",
+      "path": "core/harbor_edge_cache.md"
+    },
+    {
+      "id": "meridian-incident-response",
+      "path": "core/meridian_incident_response.md"
+    },
+    {
+      "id": "orbit-telemetry",
+      "path": "core/orbit_telemetry.md"
+    }
+  ],
+  "chunk_checks": {
+    "must_separate": [
+      {
+        "id": "safety_to_commissioning",
+        "source_id": "aster-manual",
+        "left_anchor": "A supervisor must inspect the interlock",
+        "right_anchor": "Commissioning establishes the identity",
+        "reason": "Safety response and sensor commissioning are different tasks."
+      },
+      {
+        "id": "sensor_note_to_backup_note",
+        "source_id": "aster-manual",
+        "left_anchor": "attach the observation to the shift log",
+        "right_anchor": "Configuration backups belong to a different operational concern",
+        "reason": "The lightly structured handover section intentionally changes from sensor diagnosis to configuration recovery."
+      },
+      {
+        "id": "faults_to_maintenance",
+        "source_id": "aster-manual",
+        "left_anchor": "the active alarm disappears",
+        "right_anchor": "Clean probe surfaces monthly",
+        "reason": "Fault resolution and scheduled maintenance should remain independently retrievable."
+      }
+    ],
+    "must_keep": [
+      {
+        "id": "calibration_references",
+        "source_id": "aster-manual",
+        "left_anchor": "Press **Set dry reference**",
+        "right_anchor": "The wet reference is accepted only after three stable readings",
+        "reason": "The dry and wet calibration steps need each other."
+      },
+      {
+        "id": "low_flow_response",
+        "source_id": "aster-manual",
+        "left_anchor": "flow must rise above 1.2 liters per minute",
+        "right_anchor": "raises `E17`",
+        "reason": "The threshold and its fault code form one rule."
+      },
+      {
+        "id": "restore_scope",
+        "source_id": "aster-manual",
+        "left_anchor": "place the controller in Observe mode",
+        "right_anchor": "it replaces device identities",
+        "reason": "Restore preparation and scope belong to the same recovery instruction."
+      }
+    ]
+  },
+  "cases": [
+    {
+      "id": "aster-low-flow",
+      "query": "What does the controller do when irrigation flow remains too low?",
+      "expected_source_ids": [
+        "aster-manual"
+      ],
+      "required_facts": [
+        "raises `E17`"
+      ],
+      "should_abstain": false
+    },
+    {
+      "id": "aster-wet-bed",
+      "query": "Will a scheduled irrigation window water a bed that is already wet?",
+      "expected_source_ids": [
+        "aster-manual"
+      ],
+      "required_facts": [
+        "SKIPPED_WET_BED"
+      ],
+      "should_abstain": false
+    },
+    {
+      "id": "aster-backup-restore",
+      "query": "What information is replaced when a configuration backup is restored?",
+      "expected_source_ids": [
+        "aster-manual"
+      ],
+      "required_facts": [
+        "it replaces device identities"
+      ],
+      "should_abstain": false
+    },
+    {
+      "id": "aster-isolation",
+      "query": "What should an operator do if the isolation banner does not appear?",
+      "expected_source_ids": [
+        "aster-manual"
+      ],
+      "required_facts": [
+        "record fault `E41`"
+      ],
+      "should_abstain": false
+    },
+    {
+      "id": "cache-key-components",
+      "query": "Which request properties form a Harbor cache key?",
+      "expected_source_ids": [
+        "harbor-edge-cache"
+      ],
+      "required_facts": [
+        "tenant ID",
+        "normalized path",
+        "content language"
+      ],
+      "should_abstain": false
+    },
+    {
+      "id": "telemetry-latency-metric",
+      "query": "How should Orbit record request duration and calculate release latency?",
+      "expected_source_ids": [
+        "orbit-telemetry"
+      ],
+      "required_facts": [
+        "histogram, not a gauge",
+        "p95 calculation"
+      ],
+      "should_abstain": false
+    },
+    {
+      "id": "incident-first-evidence",
+      "query": "What evidence must be captured before changing Meridian during an incident?",
+      "expected_source_ids": [
+        "meridian-incident-response"
+      ],
+      "required_facts": [
+        "alert, deployment ID, and UTC timestamp"
+      ],
+      "should_abstain": false
+    },
+    {
+      "id": "rollback-audit-multi-evidence",
+      "query": "After a faulty cache release is rolled back, how should the affected cache entries and incident record be handled?",
+      "expected_source_ids": [
+        "harbor-edge-cache",
+        "meridian-incident-response"
+      ],
+      "required_facts": [
+        "purge the affected release with its surrogate keys",
+        "released artifact"
+      ],
+      "should_abstain": false
+    },
+    {
+      "id": "authorization-header-distractor",
+      "query": "Should Harbor vary cached documentation by the Authorization header?",
+      "expected_source_ids": [
+        "harbor-edge-cache"
+      ],
+      "required_facts": [
+        "must not include the Authorization header"
+      ],
+      "should_abstain": false
+    },
+    {
+      "id": "unsupported-password-rotation",
+      "query": "How often must Meridian employees rotate their passwords?",
+      "expected_source_ids": [],
+      "required_facts": [],
+      "should_abstain": true
+    },
+    {
+      "id": "canary-failure-follow-up",
+      "query": "What should the operator do next?",
+      "expected_source_ids": [
+        "harbor-edge-cache"
+      ],
+      "required_facts": [
+        "roll back immediately"
+      ],
+      "should_abstain": false,
+      "history": [
+        "Operator: I am watching a Harbor canary deployment.",
+        "Observer: HTTP 5xx responses have exceeded 2 percent for three consecutive one-minute windows."
+      ]
+    },
+    {
+      "id": "metric-label-follow-up",
+      "query": "Which proposed labels must be removed?",
+      "expected_source_ids": [
+        "orbit-telemetry"
+      ],
+      "required_facts": [
+        "user ID",
+        "raw request path"
+      ],
+      "should_abstain": false,
+      "history": [
+        "Engineer: I am defining labels for the Orbit request-duration metric.",
+        "Reviewer: The proposal includes region, user ID, and raw request path."
+      ]
+    }
+  ]
+}

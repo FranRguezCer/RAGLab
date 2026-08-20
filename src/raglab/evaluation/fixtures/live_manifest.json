@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "profile": "live",
+  "config": {
+    "chunking": {
+      "semantic_percentile": 85
+    },
+    "retrieval": {
+      "candidate_k": 50,
+      "top_k": 5,
+      "specialized_vs_aggregate": true
+    },
+    "generation_repetitions": 3
+  },
+  "sources": [
+    {
+      "id": "attention-paper",
+      "path": "$RAGLAB_ATTENTION_PDF",
+      "domain": "research"
+    },
+    {
+      "id": "rpi-computers",
+      "path": "https://www.raspberrypi.com/documentation/computers/",
+      "domain": "computers"
+    },
+    {
+      "id": "rpi-accessories",
+      "path": "https://www.raspberrypi.com/documentation/accessories/usb.html",
+      "domain": "accessories"
+    },
+    {
+      "id": "rpi-microcontrollers",
+      "path": "https://www.raspberrypi.com/documentation/microcontrollers/microcontroller-chips.html",
+      "domain": "microcontrollers"
+    }
+  ],
+  "cases": [
+    {
+      "id": "attention-architecture",
+      "query": "What architecture does the paper propose instead of recurrence and convolutions?",
+      "expected_source_ids": ["attention-paper"],
+      "required_facts": ["based solely on attention mechanisms"],
+      "should_abstain": false,
+      "domain": "research"
+    },
+    {
+      "id": "rpi-computer-families",
+      "query": "Which documentation topic covers Raspberry Pi Compute Module devices?",
+      "expected_source_ids": ["rpi-computers"],
+      "required_facts": ["Compute Module hardware"],
+      "should_abstain": false,
+      "domain": "computers"
+    },
+    {
+      "id": "rpi-usb-hub-power",
+      "query": "How much power can the USB 3 Hub draw when bus-powered?",
+      "expected_source_ids": ["rpi-accessories"],
+      "required_facts": ["900 mA", "4.5 W"],
+      "should_abstain": false,
+      "domain": "accessories"
+    },
+    {
+      "id": "rpi-microcontroller-options",
+      "query": "Which programming options are documented for Raspberry Pi microcontrollers?",
+      "expected_source_ids": ["rpi-microcontrollers"],
+      "required_facts": ["C or C++", "MicroPython"],
+      "should_abstain": false,
+      "domain": "microcontrollers"
+    }
+  ]
+}

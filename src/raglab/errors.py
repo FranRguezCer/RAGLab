@@ -26,6 +26,10 @@ class StorageError(RagLabError):
     pass
 
 
+class EvaluationError(RagLabError):
+    """An evaluation manifest, run, comparison, or promotion is invalid."""
+
+
 class GenerationError(RagLabError):
     """Generation failed or crossed the strict grounding boundary."""
 

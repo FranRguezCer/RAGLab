@@ -139,6 +139,33 @@ class PostgresRepository:
             for row in rows
         ]
 
+    def reset_evaluation_collection(
+        self, collection: str, *, protected_prefix: str = "raglab-eval-"
+    ) -> bool:
+        """Delete one protected evaluation collection and its cascaded rows."""
+        if not collection.startswith(protected_prefix) or collection == protected_prefix:
+            raise StorageError(
+                f"Refusing to reset collection outside protected prefix {protected_prefix!r}"
+            )
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute("DELETE FROM collections WHERE name = %s", (collection,))
+            return cursor.rowcount > 0
+
+    def evaluation_chunks(self, collection: str) -> list[tuple[str, str, int]]:
+        """Return stable source URIs, content, and token counts for evaluation checks."""
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """SELECT d.source_uri, ch.content, ch.token_count
+                   FROM chunks ch
+                   JOIN documents d ON d.id = ch.document_id
+                   JOIN collections c ON c.id = d.collection_id
+                   WHERE c.name = %s
+                   ORDER BY d.source_uri, ch.chunk_index""",
+                (collection,),
+            )
+            rows = cursor.fetchall()
+        return [(str(row[0]), str(row[1]), int(row[2])) for row in rows]
+
     def current_document_id(
         self,
         config: CollectionConfig,
