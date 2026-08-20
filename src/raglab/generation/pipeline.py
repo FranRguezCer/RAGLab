@@ -46,43 +46,49 @@ _REDUCTION_SYSTEM = (
     "that supports each retained claim. Return only JSON matching the supplied schema."
 )
 
-_ANSWER_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "answer": {"type": "string", "maxLength": 1800},
-        "abstained": {"type": "boolean"},
-        "cited_source_ids": {"type": "array", "items": {"type": "string"}},
-    },
-    "required": ["answer", "abstained", "cited_source_ids"],
-    "additionalProperties": False,
-}
-
-_FACTS_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "facts": {
-            "type": "array",
-            "maxItems": 8,
-            "items": {
-                "type": "object",
-                "properties": {
-                    "claim": {"type": "string", "maxLength": 600},
-                    "source_ids": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "minItems": 1,
-                        "uniqueItems": True,
-                    },
-                },
-                "required": ["claim", "source_ids"],
-                "additionalProperties": False,
+def _answer_schema(allowed: Iterable[str]) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "answer": {"type": "string", "maxLength": 1800},
+            "abstained": {"type": "boolean"},
+            "cited_source_ids": {
+                "type": "array",
+                "items": {"type": "string", "enum": list(allowed)},
             },
         },
-        "insufficient": {"type": "boolean"},
-    },
-    "required": ["facts", "insufficient"],
-    "additionalProperties": False,
-}
+        "required": ["answer", "abstained", "cited_source_ids"],
+        "additionalProperties": False,
+    }
+
+
+def _facts_schema(allowed: Iterable[str]) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "facts": {
+                "type": "array",
+                "maxItems": 8,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "claim": {"type": "string", "maxLength": 600},
+                        "source_ids": {
+                            "type": "array",
+                            "items": {"type": "string", "enum": list(allowed)},
+                            "minItems": 1,
+                            "uniqueItems": True,
+                        },
+                    },
+                    "required": ["claim", "source_ids"],
+                    "additionalProperties": False,
+                },
+            },
+            "insufficient": {"type": "boolean"},
+        },
+        "required": ["facts", "insufficient"],
+        "additionalProperties": False,
+    }
 
 
 class RetrievalStage(Protocol):
@@ -133,15 +139,16 @@ class GenerationPipeline:
 
         calls: tuple[ModelInvocation, ...]
         prompt = self._answer_prompt(retrieval.rewritten_query or retrieval.query, sources)
-        if self._fits(_ANSWER_SYSTEM, prompt, _ANSWER_SCHEMA, request):
+        answer_schema = _answer_schema(source.id for source in sources)
+        if self._fits(_ANSWER_SYSTEM, prompt, answer_schema, request):
             single_estimate = self._estimate_invocation_tokens(
-                _ANSWER_SYSTEM, prompt, _ANSWER_SCHEMA, request
+                _ANSWER_SYSTEM, prompt, answer_schema, request
             )
             try:
                 invocation = self.model.generate(
                     prompt,
                     system=_ANSWER_SYSTEM,
-                    schema=_ANSWER_SCHEMA,
+                    schema=answer_schema,
                     config=request.config,
                 )
             except GenerationLengthError as exc:
@@ -228,14 +235,15 @@ class GenerationPipeline:
         calls.extend(reduction_calls)
         estimated += reduction_estimate
         final_prompt = self._synthesis_prompt(query, facts, sources)
+        answer_schema = _answer_schema(source.id for source in sources)
         estimated += self._estimate_invocation_tokens(
-            _ANSWER_SYSTEM, final_prompt, _ANSWER_SCHEMA, request
+            _ANSWER_SYSTEM, final_prompt, answer_schema, request
         )
         try:
             final = self.model.generate(
                 final_prompt,
                 system=_ANSWER_SYSTEM,
-                schema=_ANSWER_SCHEMA,
+                schema=answer_schema,
                 config=request.config,
             )
         except GenerationLengthError as exc:
@@ -252,14 +260,16 @@ class GenerationPipeline:
         request: GenerationRequest,
     ) -> tuple[list[dict[str, object]], list[ModelInvocation], int]:
         prompt = self._facts_prompt(query, batch)
+        allowed_ids = tuple(source.id for source in batch)
+        facts_schema = _facts_schema(allowed_ids)
         estimated = self._estimate_invocation_tokens(
-            _FACTS_SYSTEM, prompt, _FACTS_SCHEMA, request
+            _FACTS_SYSTEM, prompt, facts_schema, request
         )
         try:
             invocation = self.model.generate(
                 prompt,
                 system=_FACTS_SYSTEM,
-                schema=_FACTS_SCHEMA,
+                schema=facts_schema,
                 config=request.config,
             )
         except GenerationLengthError as exc:
@@ -280,9 +290,8 @@ class GenerationPipeline:
                 [failed, *left_calls, *right_calls],
                 estimated + left_estimate + right_estimate,
             )
-        allowed = {source.id for source in batch}
         return (
-            self._validate_facts(invocation.payload, allowed),
+            self._validate_facts(invocation.payload, set(allowed_ids)),
             [invocation],
             estimated,
         )
@@ -298,7 +307,8 @@ class GenerationPipeline:
         estimated = 0
         for _round in range(_MAX_REDUCTION_ROUNDS + 1):
             final_prompt = self._synthesis_prompt(query, facts, sources)
-            if self._fits(_ANSWER_SYSTEM, final_prompt, _ANSWER_SCHEMA, request):
+            answer_schema = _answer_schema(source.id for source in sources)
+            if self._fits(_ANSWER_SYSTEM, final_prompt, answer_schema, request):
                 return facts, calls, estimated
             if _round == _MAX_REDUCTION_ROUNDS or not facts:
                 break
@@ -328,7 +338,8 @@ class GenerationPipeline:
         for fact in facts:
             candidate = [*current, fact]
             prompt = self._reduction_prompt(query, candidate)
-            if self._fits(_REDUCTION_SYSTEM, prompt, _FACTS_SCHEMA, request):
+            facts_schema = _facts_schema(_fact_source_ids(candidate))
+            if self._fits(_REDUCTION_SYSTEM, prompt, facts_schema, request):
                 current = candidate
                 continue
             if not current:
@@ -336,7 +347,8 @@ class GenerationPipeline:
             batches.append(current)
             current = [fact]
             prompt = self._reduction_prompt(query, current)
-            if not self._fits(_REDUCTION_SYSTEM, prompt, _FACTS_SCHEMA, request):
+            facts_schema = _facts_schema(_fact_source_ids(current))
+            if not self._fits(_REDUCTION_SYSTEM, prompt, facts_schema, request):
                 raise GenerationError("One extracted fact cannot fit in num_ctx")
         if current:
             batches.append(current)
@@ -349,14 +361,16 @@ class GenerationPipeline:
         request: GenerationRequest,
     ) -> tuple[list[dict[str, object]], list[ModelInvocation], int]:
         prompt = self._reduction_prompt(query, facts)
+        allowed_ids = _fact_source_ids(facts)
+        facts_schema = _facts_schema(allowed_ids)
         estimated = self._estimate_invocation_tokens(
-            _REDUCTION_SYSTEM, prompt, _FACTS_SCHEMA, request
+            _REDUCTION_SYSTEM, prompt, facts_schema, request
         )
         try:
             invocation = self.model.generate(
                 prompt,
                 system=_REDUCTION_SYSTEM,
-                schema=_FACTS_SCHEMA,
+                schema=facts_schema,
                 config=request.config,
             )
         except GenerationLengthError as exc:
@@ -375,12 +389,7 @@ class GenerationPipeline:
                 [failed, *left_calls, *right_calls],
                 estimated + left_estimate + right_estimate,
             )
-        allowed: set[str] = set()
-        for fact in facts:
-            source_ids = fact.get("source_ids")
-            if isinstance(source_ids, list):
-                allowed.update(value for value in source_ids if isinstance(value, str))
-        return self._validate_facts(invocation.payload, allowed), [invocation], estimated
+        return self._validate_facts(invocation.payload, set(allowed_ids)), [invocation], estimated
 
     def _batches(
         self, query: str, sources: tuple[_Source, ...], request: GenerationRequest
@@ -389,8 +398,9 @@ class GenerationPipeline:
         current: tuple[_Source, ...] = ()
         for source in sources:
             candidate = (*current, source)
+            facts_schema = _facts_schema(item.id for item in candidate)
             if self._fits(
-                _FACTS_SYSTEM, self._facts_prompt(query, candidate), _FACTS_SCHEMA, request
+                _FACTS_SYSTEM, self._facts_prompt(query, candidate), facts_schema, request
             ):
                 current = candidate
                 continue
@@ -400,8 +410,9 @@ class GenerationPipeline:
                 )
             batches.append(current)
             current = (source,)
+            facts_schema = _facts_schema(item.id for item in current)
             if not self._fits(
-                _FACTS_SYSTEM, self._facts_prompt(query, current), _FACTS_SCHEMA, request
+                _FACTS_SYSTEM, self._facts_prompt(query, current), facts_schema, request
             ):
                 raise GenerationError(
                     f"Source {source.id} cannot fit in num_ctx without truncation"
@@ -416,7 +427,11 @@ class GenerationPipeline:
 
     @staticmethod
     def _facts_prompt(query: str, sources: tuple[_Source, ...]) -> str:
-        return f"Question:\n{query}\n\nSources:\n{_render_sources(sources)}"
+        valid = ", ".join(source.id for source in sources)
+        return (
+            f"Question:\n{query}\n\nValid source IDs: {valid}\n\n"
+            f"Sources:\n{_render_sources(sources)}"
+        )
 
     @staticmethod
     def _synthesis_prompt(
@@ -430,8 +445,9 @@ class GenerationPipeline:
 
     @staticmethod
     def _reduction_prompt(query: str, facts: list[dict[str, object]]) -> str:
+        valid = ", ".join(_fact_source_ids(facts))
         return (
-            f"Question:\n{query}\n\nFacts to compress:\n"
+            f"Question:\n{query}\n\nValid source IDs: {valid}\n\nFacts to compress:\n"
             f"{json.dumps(facts, ensure_ascii=False)}"
         )
 
@@ -528,8 +544,6 @@ def _render_sources(sources: tuple[_Source, ...]) -> str:
     for source in sources:
         citation = source.result.citation
         metadata = {
-            "retrieval_result_id": source.result.id,
-            "document_id": source.result.document_id,
             "source_uri": citation.source_uri,
             "source_name": citation.source_name,
             "title": citation.title,
@@ -543,6 +557,15 @@ def _render_sources(sources: tuple[_Source, ...]) -> str:
             f"[{source.id}] {json.dumps(metadata, ensure_ascii=False)}\n{source.result.content}"
         )
     return "\n\n".join(rendered)
+
+
+def _fact_source_ids(facts: list[dict[str, object]]) -> tuple[str, ...]:
+    values: list[str] = []
+    for fact in facts:
+        source_ids = fact.get("source_ids")
+        if isinstance(source_ids, list):
+            values.extend(value for value in source_ids if isinstance(value, str))
+    return tuple(dict.fromkeys(values))
 
 
 def _sum_optional(values: Iterable[int | None]) -> int | None:

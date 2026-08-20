@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
+from typing import Any, cast
 
 import pytest
 
@@ -270,6 +271,66 @@ def test_hierarchical_fallback_processes_every_complete_source_and_preserves_ids
     assert response.retrieval is retrieval.response
     assert response.sources[0].id == "S6"
     assert response.metrics.model_calls > 2
+
+
+def test_hierarchical_prompts_and_schemas_expose_only_source_aliases() -> None:
+    retrieval = Retrieval([_result(index, "x" * 600) for index in range(1, 7)])
+
+    class AliasConfusedModel:
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
+            self.schemas: list[dict[str, object]] = []
+
+        def generate(
+            self,
+            prompt: str,
+            *,
+            system: str,
+            schema: dict[str, object],
+            config: GenerationConfig,
+        ) -> ModelInvocation:
+            self.prompts.append(prompt)
+            self.schemas.append(schema)
+            aliases = list(dict.fromkeys(re.findall(r"\[(S\d+)\]", prompt)))
+            if "extract concise facts" in system:
+                selected = "result-1" if "result-1" in prompt else aliases[0]
+                return ModelInvocation(
+                    {
+                        "facts": [{"claim": "grounded fact", "source_ids": [selected]}],
+                        "insufficient": False,
+                    }
+                )
+            return ModelInvocation(
+                {"answer": "Grounded [S1].", "abstained": False, "cited_source_ids": ["S1"]}
+            )
+
+    model = AliasConfusedModel()
+    response = GenerationPipeline(retrieval, model, embedding_model="embed").generate(
+        GenerationRequest(
+            RetrievalRequest("question"), GenerationConfig(num_ctx=3000, num_predict=100)
+        )
+    )
+
+    assert response.strategy is GenerationStrategy.HIERARCHICAL
+    assert all('"retrieval_result_id"' not in prompt for prompt in model.prompts)
+    assert all('"document_id"' not in prompt for prompt in model.prompts)
+    assert all("result-1" not in prompt for prompt in model.prompts)
+    assert all("document-1" not in prompt for prompt in model.prompts)
+    for prompt, schema in zip(model.prompts[:-1], model.schemas[:-1], strict=True):
+        match = re.search(r"Valid source IDs: ([^\n]+)", prompt)
+        assert match is not None
+        valid_aliases = match.group(1).split(", ")
+        properties = cast(dict[str, Any], schema["properties"])
+        facts = cast(dict[str, Any], properties["facts"])
+        items = cast(dict[str, Any], facts["items"])
+        fact_properties = cast(dict[str, Any], items["properties"])
+        source_ids = cast(dict[str, Any], fact_properties["source_ids"])
+        source_items = cast(dict[str, Any], source_ids["items"])
+        assert source_items["enum"] == valid_aliases
+    answer_properties = cast(dict[str, Any], model.schemas[-1]["properties"])
+    cited_ids = cast(dict[str, Any], answer_properties["cited_source_ids"])
+    cited_items = cast(dict[str, Any], cited_ids["items"])
+    assert cited_items["enum"] == [f"S{index}" for index in range(1, 7)]
 
 
 def test_hierarchical_extraction_splits_a_batch_after_length_termination() -> None:
