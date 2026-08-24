@@ -22,13 +22,13 @@ Jina Reader is available only as an explicit opt-in for public URLs.
 | ---- | ---------- | -------------- |
 | 1 | This introduction and [architecture](#architecture) | How a source becomes citable evidence |
 | 2 | [Chapter 1](#chapter-1--ingestion-and-indexing) | Conversion, chunking, vectors, and atomic storage |
-| 3 | `notebooks/01_ingestion_and_indexing.ipynb` | Inspect every ingestion artifact |
+| 3 | `notebooks/01_ingestion_and_indexing.ipynb` | Trace source → Markdown → AST → chunks in three short checkpoints |
 | 4 | [Chapter 2](#chapter-2--hybrid-retrieval) | ANN, BM25, RRF, reranking, expansion, and MMR |
-| 5 | `notebooks/02_retrieval.ipynb` | Change a query and observe every retrieval stage |
+| 5 | `notebooks/02_retrieval.ipynb` | Compare semantic and lexical rankings, fuse them, and inspect the evidence |
 | 6 | [Chapter 3](#chapter-3--strict-rag-generation) | Generate cited answers without dropping evidence |
-| 7 | `notebooks/03_generation.ipynb` | Compare single-pass and hierarchical generation |
+| 7 | `notebooks/03_generation.ipynb` | Generate a cited answer and prove that an invented citation fails closed |
 | 8 | [Chapter 4](#chapter-4--reproducible-rag-evaluation) | Run, inspect, compare, and promote evaluation results |
-| 9 | `notebooks/04_rag_evaluation.ipynb` | Interpret deterministic metrics and conservative verdicts |
+| 9 | `notebooks/04_rag_evaluation.ipynb` | Run a hermetic evaluation, compare it, and promote deliberately |
 | 10 | [Appendix A](#appendix-a--test-strategy-and-suite) | Prove each system boundary |
 
 The tracked fictional **Aster Greenhouse Controller Manual** provides a controlled corpus with
@@ -159,6 +159,13 @@ raglab-generate "What causes fault E17, and how should it be resolved?" \
   --collection greenhouse-manuals
 
 raglab-evaluate run --profile core
+```
+
+After pulling a revision that adds or changes any `raglab-*` command, refresh the existing
+editable install without resolving dependencies again:
+
+```bash
+python -m pip install -e . --no-deps
 ```
 
 Running ingestion again returns `status: "skipped"` and `chunk_count: 0`; it does not duplicate
@@ -642,13 +649,7 @@ The optional appendix directs live local generation, source-shortfall experiment
 hierarchical synthesis to `raglab-generate` after a compatible collection has been indexed.
 
 The service-backed CLI output includes the answer, abstention flag, strategy, citations, and full
-retrieved evidence. If `raglab-generate` is missing after pulling a version that added the command,
-refresh the existing editable install without resolving project dependencies again:
-
-```bash
-python -m pip install -e . --no-deps
-raglab-generate --help
-```
+retrieved evidence.
 
 # Chapter 4 — Reproducible RAG evaluation
 
@@ -738,6 +739,25 @@ their recorded hashes are part of the evidence.
 | Generation | Required facts, abstention, source/citation checks, stability across 3 runs, tokens, calls, latency |
 | Operation | Hard and advisory errors plus p50/p95 retrieval and generation latency |
 
+The quality metrics answer different questions:
+
+- **Hit@K** is `1` when at least one relevant source appears in the first K results, otherwise `0`.
+- **Recall@5** is the fraction of all expected sources found in the first five results.
+- **MRR** is the reciprocal rank of the first relevant result; rank 1 scores `1`, rank 2 scores
+  `0.5`, and no relevant result scores `0`.
+- **nDCG@5** rewards relevant sources more when they appear near the top and divides that discounted
+  gain by the best possible ordering, producing a score from `0` to `1`.
+- **Generation pass rate** is the fraction of the three repetitions that pass every required-fact,
+  abstention, and citation check.
+- **Ingestion checks** are the fraction of declared must-separate and must-keep boundaries that
+  pass after chunking.
+
+For example, suppose the expected sources are `A` and `B`, while the first five results are
+`[X, A, Y, B, Z]`. Hit@1 is `0`, Hit@3 and Hit@5 are `1`, Recall@5 is `2 / 2 = 1`, MRR is
+`1 / 2 = 0.5`, and nDCG@5 is approximately `0.65` because both sources were found but neither is
+ideally ranked. If two of three generation repetitions pass, their pass rate is `2 / 3 ≈ 0.67`.
+If five of six chunk-boundary checks pass, the ingestion-check score is `5 / 6 ≈ 0.83`.
+
 Ground truth names evidence with versioned `source_id` values and normalized text anchors, never
 ephemeral PostgreSQL UUIDs. Quality comparison requires the same run schema, profile, corpus
 fingerprint, and configuration fingerprint. Latency is shown only when hardware fingerprints
@@ -759,6 +779,30 @@ RAGLab does not install or pin a second judge model in this version.
 
 A baseline is an explicitly approved run, not merely the previous run. Promotion accepts only a
 complete, full run from a clean Git worktree with no hard failures.
+
+The repository does **not** distribute a measured baseline or claim benchmark scores. It provides
+the manifests, fixtures, metric implementations, and commands needed to produce results on your
+own models and hardware. Create the first baseline by running the core profile, inspecting both
+artifacts, and then promoting that exact run:
+
+```bash
+raglab-evaluate run --profile core
+RUN_JSON=artifacts/evaluation/<run_id>.json
+cat "${RUN_JSON%.json}.md"
+raglab-evaluate baseline promote "$RUN_JSON"
+```
+
+The following comparison is **illustrative only**, not a measured RAGLab result:
+
+| Quality axis | Baseline | Candidate | Delta |
+| ------------ | -------: | --------: | ----: |
+| Ingestion checks | 1.00 | 1.00 | 0.00 |
+| Retrieval Recall@5 | 0.92 | 1.00 | +0.08 |
+| Retrieval MRR | 0.88 | 0.90 | +0.02 |
+| Generation pass rate | 0.97 | 0.94 | -0.03 |
+
+That candidate is `mixed`: retrieval improved while generation regressed. The evaluator implements
+that verdict today, but only artifacts produced by an actual run are evidence about this project.
 
 | Command | Meaning |
 | ------- | ------- |
