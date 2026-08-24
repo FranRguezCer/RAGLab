@@ -25,8 +25,8 @@ Jina Reader is available only as an explicit opt-in for public URLs.
 | 3 | `notebooks/01_ingestion_and_indexing.ipynb` | Trace source → Markdown → AST → chunks in three short checkpoints |
 | 4 | [Chapter 2](#chapter-2--hybrid-retrieval) | ANN, BM25, RRF, reranking, expansion, and MMR |
 | 5 | `notebooks/02_retrieval.ipynb` | Compare semantic and lexical rankings, fuse them, and inspect the evidence |
-| 6 | [Chapter 3](#chapter-3--strict-rag-generation) | Generate cited answers without dropping evidence |
-| 7 | `notebooks/03_generation.ipynb` | Generate a cited answer and prove that an invented citation fails closed |
+| 6 | [Chapter 3](#chapter-3--strict-rag-generation) | Generate structured, grounded answers without dropping evidence |
+| 7 | `notebooks/03_generation.ipynb` | Generate structured source IDs and prove that an invented ID fails closed |
 | 8 | [Chapter 4](#chapter-4--reproducible-rag-evaluation) | Run, inspect, compare, and promote evaluation results |
 | 9 | `notebooks/04_rag_evaluation.ipynb` | Run a hermetic evaluation, compare it, and promote deliberately |
 | 10 | [Appendix A](#appendix-a--test-strategy-and-suite) | Prove each system boundary |
@@ -54,7 +54,7 @@ flowchart LR
     EVIDENCE --> PLAN{"Complete sources fit?"}
     PLAN -->|Yes| SINGLE["Single-pass synthesis"]
     PLAN -->|No| HIER["Hierarchical extraction + synthesis"]
-    SINGLE --> VALIDATE["Strict citation validation"]
+    SINGLE --> VALIDATE["Strict source-ID validation"]
     HIER --> VALIDATE
     VALIDATE --> ANSWER["JSON answer + sources + original retrieval"]
     ANSWER --> EVAL["Evaluate ingestion + retrieval + generation"]
@@ -478,23 +478,34 @@ replace the system policy merely by containing instruction-like prose.
 | Contract | Enforced behavior |
 | -------- | ----------------- |
 | Evidence | The model may use only complete `RetrievalResult.content` values. |
-| Inline citations | Supported claims use stable IDs such as `[S1]` and `[S2]`. |
-| Structured sources | `sources` are derived from validated inline citation IDs in first-appearance order. |
+| Structured source IDs | The model returns ordered `source_ids` aliases such as `S1` and `S2`. |
+| Resolved sources | `sources` contains the retrieval identity and citation metadata for those IDs in the same order. |
 | Known sources | Every ID must refer to a result from this retrieval call. |
-| Non-abstaining answer | At least one valid citation is required. |
-| Insufficient evidence | The model must set `abstained: true`; an empty retrieval abstains without calling the LLM. |
+| Non-abstaining answer | At least one unique, valid `source_ids` entry is required. |
+| Insufficient evidence | The model must set `abstained: true` with an empty `source_ids`; an empty retrieval abstains without calling the LLM. |
 
-The model generates only `answer` and `abstained`; it does not regenerate a parallel source-ID
-list. Unknown inline IDs, invalid JSON, or an uncited non-abstaining answer fail closed with
-`GenerationError`. Validation proves traceability; it does not claim that an LLM can independently
-prove the semantic truth of every sentence.
+The model generates `answer`, `abstained`, and `source_ids` under a JSON Schema whose enum contains
+only the aliases from the current retrieval. Missing, unknown, duplicate, or invalid IDs fail
+closed with `GenerationError`; an abstention carrying IDs is invalid too. Legacy `[S#]` markers
+are removed from `answer` and never decide attribution. Validation proves traceability; it does
+not claim that an LLM can independently prove the semantic truth of every sentence.
+
+`source_ids` is the compact, authoritative declaration made by the model. `sources` is built by
+RAGLab from that validated tuple and preserves each result's retrieval ID, document ID, and full
+citation metadata. Consumers can inspect the simple aliases without losing provenance.
+
+```bash
+raglab-generate "What causes fault E17, and how should it be resolved?" \
+  --collection greenhouse-manuals
+```
 
 The response is JSON by default and contains:
 
 ```json
 {
-  "answer": "Fault E17 indicates ... [S1]",
+  "answer": "Fault E17 indicates ...",
   "abstained": false,
+  "source_ids": ["S1"],
   "sources": [
     {
       "id": "S1",
@@ -530,13 +541,13 @@ flowchart TD
     RETRIEVE --> CHECK["Validate collection model + dimension"]
     CHECK --> SOURCES["Stable S1..Sn over complete results"]
     SOURCES --> FIT{"System prompt + all sources + output reserve fit num_ctx?"}
-    FIT -->|Yes| SINGLE["Single-pass cited synthesis"]
+    FIT -->|Yes| SINGLE["Single-pass structured synthesis"]
     FIT -->|No| BATCH["Sequential complete-source batches"]
     BATCH --> FACTS["Validate source-linked facts per batch"]
-    FACTS --> SYNTH["Final cited synthesis"]
-    SINGLE --> GUARD["Validate JSON and citations"]
+    FACTS --> SYNTH["Final structured synthesis"]
+    SINGLE --> GUARD["Validate JSON and source IDs"]
     SYNTH --> GUARD
-    GUARD --> JSON["Answer + sources + strategy + original retrieval"]
+    GUARD --> JSON["Answer + source_ids + sources + original retrieval"]
 ```
 
 `single_pass` is the shortest path. Its conservative planner budgets the separate system policy,
@@ -637,7 +648,7 @@ raglab-generate "Summarize the recovery procedure" \
 ## `03_generation.ipynb`
 
 This 10–15 minute lab follows three checkpoints: create grounded evidence, generate a validated
-cited answer, and prove that an invented citation fails closed. A deterministic model adapter
+structured answer, and prove that an invented source ID fails closed. A deterministic model adapter
 drives the real `GenerationPipeline`, so the main path needs neither Ollama nor PostgreSQL.
 
 ```bash

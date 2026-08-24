@@ -91,3 +91,4 @@ class GenerationResponse:
     minimum_sources: int
     source_count: int
     metrics: GenerationMetrics
+    source_ids: tuple[str, ...] = ()

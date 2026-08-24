@@ -49,7 +49,7 @@ def test_run_cli_prints_complete_report_and_exits_one_for_hard_failures(
         def generate(self, case, *, collection):  # type: ignore[no-untyped-def]
             raise GenerationContractError(
                 "invalid grounding",
-                raw_output='{"answer":"uncited","abstained":false}',
+                raw_output='{"answer":"uncited","abstained":false,"source_ids":[]}',
                 answer="uncited",
                 abstained=False,
                 cited_source_ids=(),

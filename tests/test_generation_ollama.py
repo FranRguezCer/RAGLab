@@ -21,7 +21,7 @@ def test_ollama_uses_schema_no_think_context_and_positive_ttl() -> None:
     client.response = {
         "done": True,
         "done_reason": "stop",
-        "response": '{"answer":"ok"}',
+        "response": '{"answer":"ok","abstained":false,"source_ids":["S1"]}',
         "prompt_eval_count": 12,
         "eval_count": 3,
     }
@@ -42,6 +42,7 @@ def test_ollama_uses_schema_no_think_context_and_positive_ttl() -> None:
         "temperature": 0,
     }
     assert result.prompt_tokens == 12
+    assert result.payload["source_ids"] == ["S1"]
 
 
 def test_ollama_rejects_length_termination() -> None:

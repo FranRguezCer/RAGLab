@@ -86,6 +86,7 @@ def test_cli_composes_typed_retrieval_and_prints_json(
     ] == "rewriter"
     payload = json.loads(capsys.readouterr().out)
     assert payload["strategy"] == "single_pass"
+    assert payload["source_ids"] == []
     assert payload["retrieval"]["query"] == "question"
 
 

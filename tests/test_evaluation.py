@@ -156,7 +156,7 @@ def test_contract_failures_are_recorded_without_aborting_the_full_run(
             if self.generation_calls == 1:
                 raise GenerationContractError(
                     "A non-abstaining answer must cite retrieved evidence",
-                    raw_output='{"answer":"uncited","abstained":false}',
+                    raw_output='{"answer":"uncited","abstained":false,"source_ids":[]}',
                     answer="uncited",
                     abstained=False,
                     cited_source_ids=(),
@@ -180,7 +180,7 @@ def test_contract_failures_are_recorded_without_aborting_the_full_run(
     assert failed == {
         "status": "failed",
         "error": "A non-abstaining answer must cite retrieved evidence",
-        "raw_output": '{"answer":"uncited","abstained":false}',
+        "raw_output": '{"answer":"uncited","abstained":false,"source_ids":[]}',
         "latency_ms": pytest.approx(failed["latency_ms"]),
         "answer": "uncited",
         "abstained": False,
