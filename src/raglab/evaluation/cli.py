@@ -99,6 +99,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (RagLabError, RuntimeError, ValueError, OSError) as exc:
         parser.exit(1, f"raglab-evaluate: error: {exc}\n")
     print(json.dumps(result, indent=2, sort_keys=True))
+    if args.command == "run" and result.get("errors", {}).get("hard"):
+        return 1
     return 0
 
 

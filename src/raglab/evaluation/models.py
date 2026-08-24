@@ -5,12 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-RUN_SCHEMA_VERSION = 1
+RUN_SCHEMA_VERSION = 2
 PROTECTED_COLLECTION_PREFIX = "raglab-eval-"
 VERDICTS = {"improved", "regressed", "mixed", "no_clear_change"}
 RUN_JSON_SCHEMA: dict[str, Any] = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://raglab.local/schemas/evaluation-run-v1.json",
+    "$id": "https://raglab.local/schemas/evaluation-run-v2.json",
     "type": "object",
     "required": [
         "schema_version",

@@ -7,6 +7,7 @@ import json
 import os
 import platform
 import subprocess
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -14,7 +15,7 @@ from pathlib import Path
 from statistics import mean
 from typing import Any, cast
 
-from raglab.errors import EvaluationError
+from raglab.errors import EvaluationError, GenerationContractError
 from raglab.evaluation.manifest import corpus_fingerprint
 from raglab.evaluation.metrics import (
     conservative_verdict,
@@ -200,15 +201,54 @@ class EvaluationApplication:
             if approximate.aggregate_source_ids
             else None
         )
-        repetitions = [self.executor.generate(case, collection=collection) for _ in range(3)]
-        checks = [self._generation_checks(case, repetition) for repetition in repetitions]
+        repetitions: list[dict[str, Any]] = []
+        checks: list[dict[str, bool]] = []
+        for repetition_number in range(1, 4):
+            started = time.perf_counter()
+            try:
+                observation = self.executor.generate(case, collection=collection)
+            except GenerationContractError as exc:
+                attempt: dict[str, Any] = {
+                    "status": "failed",
+                    "error": str(exc),
+                    "raw_output": exc.raw_output,
+                    "latency_ms": (time.perf_counter() - started) * 1000,
+                }
+                for key in (
+                    "answer",
+                    "abstained",
+                    "cited_source_ids",
+                    "prompt_tokens",
+                    "generated_tokens",
+                    "model_calls",
+                ):
+                    value = getattr(exc, key)
+                    if value is not None:
+                        attempt[key] = list(value) if isinstance(value, tuple) else value
+                repetitions.append(attempt)
+                checks.append(
+                    {"required_facts": False, "abstention": False, "citations": False}
+                )
+                errors["hard"].append(
+                    f"{case.id} repetition {repetition_number}: {exc}"
+                )
+                continue
+            repetition_checks = self._generation_checks(case, observation)
+            checks.append(repetition_checks)
+            failed_checks = [name for name, passed in repetition_checks.items() if not passed]
+            if failed_checks:
+                reason = "Generation checks failed: " + ", ".join(failed_checks)
+                repetitions.append(
+                    {"status": "failed", **asdict(observation), "error": reason}
+                )
+                errors["hard"].append(
+                    f"{case.id} repetition {repetition_number}: {reason}"
+                )
+            else:
+                repetitions.append({"status": "passed", **asdict(observation)})
         valid_repetitions = sum(all(check.values()) for check in checks)
         if metrics["recall_at_5"] < 1.0 and not case.should_abstain:
             errors["hard"].append(f"{case.id}: expected evidence was not retrieved")
-        if valid_repetitions != 3:
-            errors["hard"].append(
-                f"{case.id}: deterministic generation checks passed {valid_repetitions}/3"
-            )
         return {
             "id": case.id,
             "query": case.query,
@@ -224,7 +264,7 @@ class EvaluationApplication:
                 "exact_latency_ms": exact.latency_ms,
             },
             "generation": {
-                "repetitions": [asdict(item) for item in repetitions],
+                "repetitions": repetitions,
                 "checks": checks,
                 "stability": f"{valid_repetitions}/3",
                 "valid_repetitions": valid_repetitions,
@@ -266,18 +306,19 @@ class EvaluationApplication:
             int(repetition["prompt_tokens"])
             for case in cases
             for repetition in case["generation"]["repetitions"]
-            if repetition["prompt_tokens"] is not None
+            if repetition.get("prompt_tokens") is not None
         ]
         generated_tokens = [
             int(repetition["generated_tokens"])
             for case in cases
             for repetition in case["generation"]["repetitions"]
-            if repetition["generated_tokens"] is not None
+            if repetition.get("generated_tokens") is not None
         ]
         model_calls = sum(
             int(repetition["model_calls"])
             for case in cases
             for repetition in case["generation"]["repetitions"]
+            if repetition.get("model_calls") is not None
         )
         checks_total = ingestion.separation_total + ingestion.cohesion_total
         checks_passed = ingestion.separation_passed + ingestion.cohesion_passed
@@ -338,6 +379,8 @@ class EvaluationApplication:
         for result in cast(list[dict[str, Any]], run["cases"]):
             case = by_id[str(result["id"])]
             for repetition in result["generation"]["repetitions"]:
+                if repetition["status"] == "failed":
+                    continue
                 try:
                     judgments.append(self.judge.evaluate(case, str(repetition["answer"])))
                 except Exception as exc:
@@ -473,6 +516,11 @@ def render_markdown(run: Mapping[str, Any]) -> str:
             f"- `{case['id']}`: Recall@5 `{metrics['recall_at_5']:.3f}`, "
             f"MRR `{metrics['mrr']:.3f}`, stability `{case['generation']['stability']}`"
         )
+        for number, repetition in enumerate(case["generation"]["repetitions"], 1):
+            if repetition["status"] == "failed":
+                lines.append(
+                    f"  - Repetition {number} failed: {repetition['error']}"
+                )
     return "\n".join(lines) + "\n"
 
 

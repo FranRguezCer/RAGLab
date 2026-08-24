@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from raglab.errors import GenerationError
+from raglab.errors import GenerationContractError, GenerationError
 from raglab.generation import GenerationConfig
 from raglab.generation.ollama import OllamaGenerationModel
 
@@ -50,6 +50,25 @@ def test_ollama_rejects_length_termination() -> None:
 
     with pytest.raises(GenerationError, match="exhausted num_predict"):
         client.generate("prompt", system="system", schema={}, config=GenerationConfig())
+
+
+def test_ollama_preserves_invalid_model_json_as_a_contract_failure() -> None:
+    client = StubOllama()
+    client.response = {
+        "done": True,
+        "done_reason": "stop",
+        "response": "not-json",
+        "prompt_eval_count": 12,
+        "eval_count": 3,
+    }
+
+    with pytest.raises(GenerationContractError, match="invalid generation JSON") as raised:
+        client.generate("prompt", system="system", schema={}, config=GenerationConfig())
+
+    assert raised.value.raw_output == "not-json"
+    assert raised.value.prompt_tokens == 12
+    assert raised.value.generated_tokens == 3
+    assert raised.value.model_calls is None
 
 
 def test_ollama_does_not_send_qwen_command_to_other_models() -> None:

@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from raglab.errors import EvaluationError, StorageError
+from raglab.errors import (
+    EvaluationError,
+    GenerationContractError,
+    GenerationError,
+    StorageError,
+)
 from raglab.evaluation import (
     EvaluationApplication,
     HermeticEvaluationExecutor,
@@ -14,7 +20,11 @@ from raglab.evaluation import (
     load_manifest,
 )
 from raglab.evaluation.metrics import conservative_verdict, retrieval_metrics
-from raglab.evaluation.models import EvaluationCase
+from raglab.evaluation.models import (
+    RUN_SCHEMA_VERSION,
+    EvaluationCase,
+    GenerationObservation,
+)
 from raglab.storage import PostgresRepository
 
 
@@ -125,11 +135,128 @@ def test_application_runs_three_repetitions_and_persists_artifacts(tmp_path: Pat
     run = application.run(manifest)
 
     assert run["status"] == "complete"
+    assert run["schema_version"] == RUN_SCHEMA_VERSION == 2
     assert run["partial"] is False
     assert run["errors"]["hard"] == []
     assert all(case["generation"]["stability"] == "3/3" for case in run["cases"])
     assert (tmp_path / f"{run['run_id']}.json").exists()
     assert "## Quality axes" in (tmp_path / f"{run['run_id']}.md").read_text()
+
+
+def test_contract_failures_are_recorded_without_aborting_the_full_run(
+    tmp_path: Path,
+) -> None:
+    class ContractFailingExecutor(HermeticEvaluationExecutor):
+        def __init__(self) -> None:
+            super().__init__()
+            self.generation_calls = 0
+
+        def generate(self, case: EvaluationCase, *, collection: str):  # type: ignore[no-untyped-def]
+            self.generation_calls += 1
+            if self.generation_calls == 1:
+                raise GenerationContractError(
+                    "A non-abstaining answer must cite retrieved evidence",
+                    raw_output='{"answer":"uncited","abstained":false}',
+                    answer="uncited",
+                    abstained=False,
+                    cited_source_ids=(),
+                )
+            return super().generate(case, collection=collection)
+
+    executor = ContractFailingExecutor()
+    application = EvaluationApplication(
+        executor,
+        artifact_dir=tmp_path,
+        generation_model="generator",
+        metadata_provider=metadata,
+    )
+
+    run = application.run(load_manifest())
+
+    assert run["status"] == "complete"
+    assert len(run["cases"]) == 12
+    assert executor.generation_calls == 36
+    failed = run["cases"][0]["generation"]["repetitions"][0]
+    assert failed == {
+        "status": "failed",
+        "error": "A non-abstaining answer must cite retrieved evidence",
+        "raw_output": '{"answer":"uncited","abstained":false}',
+        "latency_ms": pytest.approx(failed["latency_ms"]),
+        "answer": "uncited",
+        "abstained": False,
+        "cited_source_ids": [],
+    }
+    assert "prompt_tokens" not in failed
+    assert "model_calls" not in failed
+    assert run["summary"]["quality"]["generation_pass_rate"] == pytest.approx(35 / 36)
+    assert run["errors"]["hard"][0].startswith("aster-low-flow repetition 1:")
+    with pytest.raises(EvaluationError, match="hard failures"):
+        application.promote(run)
+    markdown = (tmp_path / f"{run['run_id']}.md").read_text()
+    assert "Repetition 1 failed: A non-abstaining answer" in markdown
+
+
+@pytest.mark.parametrize("failed_check", ["required_facts", "abstention", "citations"])
+def test_failed_generation_checks_are_recorded_per_repetition(
+    failed_check: str, tmp_path: Path
+) -> None:
+    class CheckFailingExecutor(HermeticEvaluationExecutor):
+        def __init__(self) -> None:
+            super().__init__()
+            self.generation_calls = 0
+
+        def generate(
+            self, case: EvaluationCase, *, collection: str
+        ) -> GenerationObservation:
+            observation = super().generate(case, collection=collection)
+            self.generation_calls += 1
+            if self.generation_calls != 1:
+                return observation
+            if failed_check == "required_facts":
+                return replace(observation, answer="Unsupported answer [S1].")
+            if failed_check == "abstention":
+                return replace(observation, abstained=not observation.abstained)
+            return replace(observation, cited_source_ids=())
+
+    application = EvaluationApplication(
+        CheckFailingExecutor(), artifact_dir=tmp_path, metadata_provider=metadata
+    )
+
+    run = application.run(load_manifest())
+
+    failed = run["cases"][0]["generation"]["repetitions"][0]
+    assert failed["status"] == "failed"
+    assert failed["error"] == f"Generation checks failed: {failed_check}"
+    assert "raw_output" not in failed
+    assert failed["prompt_tokens"] == 100
+    assert failed["generated_tokens"] == 20
+    assert failed["model_calls"] == 1
+    assert failed["latency_ms"] == 3.0
+    assert run["summary"]["quality"]["generation_pass_rate"] == pytest.approx(35 / 36)
+    assert run["errors"]["hard"] == [
+        f"aster-low-flow repetition 1: Generation checks failed: {failed_check}"
+    ]
+    markdown = (tmp_path / f"{run['run_id']}.md").read_text()
+    assert f"Repetition 1 failed: Generation checks failed: {failed_check}" in markdown
+
+
+def test_operational_generation_error_still_aborts_the_run(tmp_path: Path) -> None:
+    class OperationalFailureExecutor(HermeticEvaluationExecutor):
+        def generate(self, case: EvaluationCase, *, collection: str):  # type: ignore[no-untyped-def]
+            raise GenerationError("Ollama connection failed")
+
+    application = EvaluationApplication(
+        OperationalFailureExecutor(), artifact_dir=tmp_path, metadata_provider=metadata
+    )
+
+    with pytest.raises(GenerationError, match="connection failed"):
+        application.run(load_manifest())
+
+    artifacts = list(tmp_path.glob("*.json"))
+    assert len(artifacts) == 1
+    failed_run = json.loads(artifacts[0].read_text())
+    assert failed_run["status"] == "failed"
+    assert failed_run["cases"] == []
 
 
 def test_compare_checks_compatibility_and_hardware(tmp_path: Path) -> None:

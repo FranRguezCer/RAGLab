@@ -7,7 +7,7 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from raglab.errors import GenerationError, GenerationLengthError
+from raglab.errors import GenerationContractError, GenerationError, GenerationLengthError
 from raglab.generation.models import GenerationConfig, ModelInvocation
 from raglab.ollama import model_uses_no_think
 
@@ -58,17 +58,33 @@ class OllamaGenerationModel:
             )
         raw = payload.get("response")
         if not isinstance(raw, str):
-            raise GenerationError("Ollama returned no textual generation response")
+            raise GenerationContractError(
+                "Ollama returned no textual generation response",
+                raw_output=json.dumps(payload, ensure_ascii=False),
+                prompt_tokens=_optional_int(payload.get("prompt_eval_count")),
+                generated_tokens=_optional_int(payload.get("eval_count")),
+            )
         try:
             parsed = json.loads(raw)
         except json.JSONDecodeError as exc:
-            raise GenerationError("Ollama returned invalid generation JSON") from exc
+            raise GenerationContractError(
+                "Ollama returned invalid generation JSON",
+                raw_output=raw,
+                prompt_tokens=_optional_int(payload.get("prompt_eval_count")),
+                generated_tokens=_optional_int(payload.get("eval_count")),
+            ) from exc
         if not isinstance(parsed, dict):
-            raise GenerationError("Ollama generation JSON must be an object")
+            raise GenerationContractError(
+                "Ollama generation JSON must be an object",
+                raw_output=raw,
+                prompt_tokens=_optional_int(payload.get("prompt_eval_count")),
+                generated_tokens=_optional_int(payload.get("eval_count")),
+            )
         return ModelInvocation(
             parsed,
             _optional_int(payload.get("prompt_eval_count")),
             _optional_int(payload.get("eval_count")),
+            raw,
         )
 
     def _request(self, body: dict[str, Any]) -> dict[str, Any]:

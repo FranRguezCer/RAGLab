@@ -50,6 +50,7 @@ class ModelInvocation:
     payload: dict[str, Any]
     prompt_tokens: int | None = None
     generated_tokens: int | None = None
+    raw_output: str | None = None
 
 
 class GenerationModel(Protocol):

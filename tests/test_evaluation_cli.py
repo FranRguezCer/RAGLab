@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from raglab.errors import GenerationContractError
 from raglab.evaluation.application import HermeticEvaluationExecutor
 from raglab.evaluation.cli import main
 
@@ -39,3 +40,29 @@ def test_compare_and_promote_cli(
     capsys.readouterr()
     assert main(["--artifact-dir", str(tmp_path), "compare", str(run_path)]) == 0
     assert json.loads(capsys.readouterr().out)["verdict"] == "no_clear_change"
+
+
+def test_run_cli_prints_complete_report_and_exits_one_for_hard_failures(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    class ContractFailingExecutor(HermeticEvaluationExecutor):
+        def generate(self, case, *, collection):  # type: ignore[no-untyped-def]
+            raise GenerationContractError(
+                "invalid grounding",
+                raw_output='{"answer":"uncited","abstained":false}',
+                answer="uncited",
+                abstained=False,
+                cited_source_ids=(),
+            )
+
+    monkeypatch.setattr(
+        "raglab.evaluation.cli.LiveEvaluationExecutor",
+        lambda **_kwargs: ContractFailingExecutor(),
+    )
+
+    assert main(["--artifact-dir", str(tmp_path), "run", "--profile", "core"]) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "complete"
+    assert len(payload["cases"]) == 12
+    assert payload["summary"]["quality"]["generation_pass_rate"] == 0.0
+    assert len(payload["errors"]["hard"]) == 36

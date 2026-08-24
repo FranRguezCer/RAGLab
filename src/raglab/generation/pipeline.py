@@ -8,7 +8,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from raglab.errors import GenerationError, GenerationLengthError
+from raglab.errors import GenerationContractError, GenerationError, GenerationLengthError
 from raglab.generation.models import (
     GeneratedSource,
     GenerationMetrics,
@@ -165,7 +165,21 @@ class GenerationPipeline:
         else:
             invocation, calls, estimated = self._hierarchical(request, retrieval, sources)
             strategy = GenerationStrategy.HIERARCHICAL
-        answer, abstained, cited_ids = self._validate_answer(invocation.payload, sources)
+        try:
+            answer, abstained, cited_ids = self._validate_answer(
+                invocation.payload, sources, raw_output=invocation.raw_output
+            )
+        except GenerationContractError as exc:
+            raise GenerationContractError(
+                str(exc),
+                raw_output=exc.raw_output,
+                answer=exc.answer,
+                abstained=exc.abstained,
+                cited_source_ids=exc.cited_source_ids,
+                prompt_tokens=_sum_optional(item.prompt_tokens for item in calls),
+                generated_tokens=_sum_optional(item.generated_tokens for item in calls),
+                model_calls=len(calls),
+            ) from exc
         by_id = {source.id: source for source in sources}
         cited_sources = tuple(
             GeneratedSource(
@@ -288,7 +302,9 @@ class GenerationPipeline:
                 estimated + left_estimate + right_estimate,
             )
         return (
-            self._validate_facts(invocation.payload, set(allowed_ids)),
+            self._validate_facts(
+                invocation.payload, set(allowed_ids), raw_output=invocation.raw_output
+            ),
             [invocation],
             estimated,
         )
@@ -386,7 +402,13 @@ class GenerationPipeline:
                 [failed, *left_calls, *right_calls],
                 estimated + left_estimate + right_estimate,
             )
-        return self._validate_facts(invocation.payload, set(allowed_ids)), [invocation], estimated
+        return (
+            self._validate_facts(
+                invocation.payload, set(allowed_ids), raw_output=invocation.raw_output
+            ),
+            [invocation],
+            estimated,
+        )
 
     def _batches(
         self, query: str, sources: tuple[_Source, ...], request: GenerationRequest
@@ -450,15 +472,19 @@ class GenerationPipeline:
 
     @staticmethod
     def _validate_facts(
-        payload: dict[str, Any], allowed: set[str]
+        payload: dict[str, Any], allowed: set[str], *, raw_output: str | None = None
     ) -> list[dict[str, object]]:
         raw = payload.get("facts")
         if not isinstance(raw, list) or not isinstance(payload.get("insufficient"), bool):
-            raise GenerationError("Hierarchical extraction violated its JSON contract")
+            raise _contract_error(
+                "Hierarchical extraction violated its JSON contract", payload, raw_output
+            )
         facts: list[dict[str, object]] = []
         for item in raw:
             if not isinstance(item, dict):
-                raise GenerationError("Hierarchical extraction returned a non-object fact")
+                raise _contract_error(
+                    "Hierarchical extraction returned a non-object fact", payload, raw_output
+                )
             claim, source_ids = item.get("claim"), item.get("source_ids")
             if (
                 not isinstance(claim, str)
@@ -468,26 +494,37 @@ class GenerationPipeline:
                 or not source_ids
                 or not all(isinstance(value, str) for value in source_ids)
             ):
-                raise GenerationError("Hierarchical extraction returned an invalid fact")
+                raise _contract_error(
+                    "Hierarchical extraction returned an invalid fact", payload, raw_output
+                )
             if not set(source_ids) <= allowed:
-                raise GenerationError("Hierarchical extraction cited an unknown source")
+                raise _contract_error(
+                    "Hierarchical extraction cited an unknown source", payload, raw_output
+                )
             facts.append({"claim": claim.strip(), "source_ids": list(dict.fromkeys(source_ids))})
         return facts
 
     @staticmethod
     def _validate_answer(
-        payload: dict[str, Any], sources: tuple[_Source, ...]
+        payload: dict[str, Any],
+        sources: tuple[_Source, ...],
+        *,
+        raw_output: str | None = None,
     ) -> tuple[str, bool, tuple[str, ...]]:
         answer = payload.get("answer")
         abstained = payload.get("abstained")
         if not isinstance(answer, str) or not answer.strip() or not isinstance(abstained, bool):
-            raise GenerationError("Generation violated its JSON response contract")
+            raise _contract_error(
+                "Generation violated its JSON response contract", payload, raw_output
+            )
         cited_ids = tuple(dict.fromkeys(f"S{value}" for value in _CITATION.findall(answer)))
         allowed = {source.id for source in sources}
         if not set(cited_ids) <= allowed:
-            raise GenerationError("Generation cited an unknown source")
+            raise _contract_error("Generation cited an unknown source", payload, raw_output)
         if not abstained and not cited_ids:
-            raise GenerationError("A non-abstaining answer must cite retrieved evidence")
+            raise _contract_error(
+                "A non-abstaining answer must cite retrieved evidence", payload, raw_output
+            )
         return answer.strip(), abstained, cited_ids
 
     @staticmethod
@@ -553,6 +590,35 @@ def _fact_source_ids(facts: list[dict[str, object]]) -> tuple[str, ...]:
         if isinstance(source_ids, list):
             values.extend(value for value in source_ids if isinstance(value, str))
     return tuple(dict.fromkeys(values))
+
+
+def _contract_error(
+    message: str, payload: dict[str, Any], raw_output: str | None = None
+) -> GenerationContractError:
+    answer = payload.get("answer")
+    answer = answer if isinstance(answer, str) else None
+    abstained = payload.get("abstained")
+    abstained = abstained if isinstance(abstained, bool) else None
+    cited_ids: list[str] = []
+    if answer is not None:
+        cited_ids.extend(f"S{value}" for value in _CITATION.findall(answer))
+    facts = payload.get("facts")
+    if isinstance(facts, list):
+        for fact in facts:
+            if not isinstance(fact, dict):
+                continue
+            source_ids = fact.get("source_ids")
+            if isinstance(source_ids, list):
+                cited_ids.extend(value for value in source_ids if isinstance(value, str))
+    return GenerationContractError(
+        message,
+        raw_output=raw_output
+        if raw_output is not None
+        else json.dumps(payload, ensure_ascii=False, sort_keys=True),
+        answer=answer,
+        abstained=abstained,
+        cited_source_ids=tuple(dict.fromkeys(cited_ids)),
+    )
 
 
 def _sum_optional(values: Iterable[int | None]) -> int | None:

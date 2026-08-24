@@ -764,10 +764,19 @@ fingerprint, and configuration fingerprint. Latency is shown only when hardware 
 match.
 
 Hard failures cover objective contract breaches such as missing expected evidence or failed
-fact, abstention, or citation checks. Numeric deltas remain descriptive until tolerances are
-calibrated. An optional LLM judge is advisory: it runs after deterministic answers are saved and
-the generator is unloaded; judge failure or OOM does not invalidate the deterministic core.
-The judge model must differ from the generation model.
+fact, abstention, or citation checks. A completed model response that violates JSON, fact,
+abstention, or citation rules is evaluation evidence: the failed repetition retains its raw
+output and available parsed fields, the benchmark continues through every case, and the run is
+persisted with `status: complete`. The CLI still exits with status `1` and promotion remains
+blocked because the completed run contains hard quality failures.
+
+Infrastructure failures are different. Network, HTTP, collection, configuration, and context
+failures abort execution, persist a run with `status: failed`, and produce the
+`raglab-evaluate: error:` diagnostic. They are not converted into low quality scores because the
+benchmark did not finish. Numeric deltas remain descriptive until tolerances are calibrated. An
+optional LLM judge is advisory: it runs after deterministic answers are saved and the generator
+is unloaded; judge failure or OOM does not invalidate the deterministic core. The judge model
+must differ from the generation model.
 
 ```bash
 raglab-evaluate run --profile core --judge-model <different-model>
@@ -791,6 +800,10 @@ RUN_JSON=artifacts/evaluation/<run_id>.json
 cat "${RUN_JSON%.json}.md"
 raglab-evaluate baseline promote "$RUN_JSON"
 ```
+
+Evaluation run artifacts use schema v2 so each generation repetition can record success or
+diagnostic failure data. The manifest schema remains v1. Regenerate any run-schema-v1 baseline
+before comparing or promoting it; cross-schema comparisons are rejected.
 
 The following comparison is **illustrative only**, not a measured RAGLab result:
 

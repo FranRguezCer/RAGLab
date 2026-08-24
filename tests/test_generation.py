@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Sequence
 from typing import Any, cast
@@ -7,7 +8,7 @@ from typing import Any, cast
 import pytest
 
 from raglab import Citation, ProvenanceStatus
-from raglab.errors import GenerationError, GenerationLengthError
+from raglab.errors import GenerationContractError, GenerationError, GenerationLengthError
 from raglab.generation import (
     GenerationConfig,
     GenerationPipeline,
@@ -234,8 +235,64 @@ def test_generation_fails_closed_on_invalid_citations(
         Retrieval([_result(1), _result(2)]), Outputs(payload), embedding_model="embed"
     )
 
-    with pytest.raises(GenerationError, match=message):
+    with pytest.raises(GenerationContractError, match=message) as raised:
         pipeline.generate(GenerationRequest(RetrievalRequest("question")))
+
+    assert raised.value.raw_output == json.dumps(payload, sort_keys=True)
+    assert raised.value.answer == payload["answer"]
+    assert raised.value.abstained is False
+    assert raised.value.model_calls == 1
+
+
+def test_generation_classifies_invalid_answer_shape_as_a_contract_failure() -> None:
+    pipeline = GenerationPipeline(
+        Retrieval([_result(1)]), Outputs({"answer": 42}), embedding_model="embed"
+    )
+
+    with pytest.raises(GenerationContractError, match="JSON response contract") as raised:
+        pipeline.generate(GenerationRequest(RetrievalRequest("question")))
+
+    assert raised.value.raw_output == '{"answer": 42}'
+    assert raised.value.answer is None
+    assert raised.value.abstained is None
+
+
+def test_generation_classifies_invalid_hierarchical_facts_as_contract_failures() -> None:
+    class InvalidFactsModel:
+        def generate(
+            self,
+            prompt: str,
+            *,
+            system: str,
+            schema: dict[str, object],
+            config: GenerationConfig,
+        ) -> ModelInvocation:
+            del prompt, schema, config
+            if "extract concise facts" in system:
+                return ModelInvocation(
+                    {
+                        "facts": [{"claim": "invented", "source_ids": ["S99"]}],
+                        "insufficient": False,
+                    }
+                )
+            return ModelInvocation({"answer": "Grounded [S1].", "abstained": False})
+
+    pipeline = GenerationPipeline(
+        Retrieval([_result(index, "x" * 600) for index in range(1, 7)]),
+        InvalidFactsModel(),
+        embedding_model="embed",
+    )
+
+    with pytest.raises(GenerationContractError, match="unknown source") as raised:
+        pipeline.generate(
+            GenerationRequest(
+                RetrievalRequest("question"),
+                GenerationConfig(num_ctx=3000, num_predict=100),
+            )
+        )
+
+    assert raised.value.cited_source_ids == ("S99",)
+    assert '"facts"' in raised.value.raw_output
 
 
 def test_hierarchical_fallback_processes_every_complete_source_and_preserves_ids() -> None:
