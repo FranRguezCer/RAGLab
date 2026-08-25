@@ -29,7 +29,7 @@ def test_v3_run_records_definition_evidence_checks_and_separate_quality_axes(
 ) -> None:
     run = _run(tmp_path)
 
-    assert run["schema_version"] == 3
+    assert run["schema_version"] == 4
     assert len(run["definition"]["fingerprint"]) == 64
     assert run["definition"]["manifest"]["profile"] == "core"
     assert len(run["ingestion"]["checks"]) == 6
@@ -77,7 +77,7 @@ def test_contract_failure_uses_null_for_checks_without_observable_fields(
 @pytest.mark.parametrize(
     ("mutate", "message"),
     [
-        (lambda run: run.update(schema_version=2), "schema v3"),
+        (lambda run: run.update(schema_version=3), "schema v4"),
         (lambda run: run.update(partial=True), "partial"),
         (lambda run: run["metadata"].update(dirty=True), "dirty"),
         (lambda run: run["errors"]["hard"].append("failure"), "hard failures"),
@@ -99,11 +99,11 @@ def test_compare_rejects_ineligible_or_incompatible_v3_runs(
         EvaluationApplication(HermeticEvaluationExecutor()).compare(candidate, baseline)
 
 
-def test_promotion_rejects_legacy_v2_run(tmp_path: Path) -> None:
+def test_promotion_rejects_legacy_v3_run(tmp_path: Path) -> None:
     run = _run(tmp_path)
-    run["schema_version"] = 2
+    run["schema_version"] = 3
 
-    with pytest.raises(EvaluationError, match="schema v3"):
+    with pytest.raises(EvaluationError, match="schema v4"):
         EvaluationApplication(HermeticEvaluationExecutor()).promote(run)
 
 
@@ -140,5 +140,5 @@ def test_run_cli_prints_compact_receipt_and_full_json(
         ["--artifact-dir", str(tmp_path), "run", "--full-json"]
     ) == 0
     full = json.loads(capsys.readouterr().out)
-    assert full["schema_version"] == 3
+    assert full["schema_version"] == 4
     assert len(full["cases"]) == 12

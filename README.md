@@ -727,9 +727,12 @@ pipeline.
 | `core` | Authoritative, reproducible benchmark over tracked fixtures; judge disabled by default | PostgreSQL, Ollama, and BGE |
 | `live` | Optional reality check over Attention and one source from each Raspberry Pi domain | Core services, an absolute PDF path, and network access |
 
-The core manifest uses schema v2. Each required fact has a stable ID, one or more
-`evidence_anchors` for retrieval, and deterministic `answer_variants` for generation. This keeps
-the text that proves evidence separate from the equivalent wording an answer may use. The
+The core manifest uses schema v3. Each required fact has a stable ID, one or more
+`evidence_anchors` for retrieval, deterministic `answer_variants` for lexical grading, and one
+canonical `semantic_claim`. Lexical matching remains first; only a parseable, non-abstaining
+answer that misses a fact lexically is eligible for bounded semantic rescue. The independent,
+revision-pinned DeBERTa NLI model runs on CPU in batches of at most eight and rejects pairs over
+512 tokens rather than truncating them. The
 manifest also fixes semantic percentile `85`, four Aster questions and chunk controls, three short
 technical sources, distractor and abstention cases, multi-evidence retrieval, and two multi-turn
 cases. Each case runs approximate and exact retrieval once each, then generates three times. The
@@ -753,7 +756,7 @@ their recorded hashes are part of the evidence.
 | -------- | ----------------- |
 | Ingestion | Named must-separate and must-keep checks, separate cohesion/separation rates, document/chunk counts, token distribution, latency |
 | Retrieval | Evidence Hit@1/3/5, Recall@5 and MRR; source metrics and bounded nDCG@5 as diagnostics; exact-versus-HNSW agreement; latency |
-| Generation | Contract, facts by ID, abstention, and citation checks; component rates and fail-closed pass rate; stability across 3 runs; tokens, calls, latency |
+| Generation | Contract, lexical/semantic/final facts by ID, abstention, and citation checks; rescue and unresolved rates; fail-closed pass rate; stability across 3 runs; tokens, calls, latency |
 | Operation | Hard and advisory errors plus p50/p95 retrieval and generation latency |
 
 The quality metrics answer different questions:
@@ -777,10 +780,10 @@ stable chunk reference such as `aster-manual:3-4`. Approximate-versus-exact agre
 references rather than ephemeral database UUIDs.
 
 Ground truth names evidence with versioned `source_id` values and normalized text anchors, never
-ephemeral PostgreSQL UUIDs. Run schema v3 fingerprints the complete benchmark definition:
+ephemeral PostgreSQL UUIDs. Run schema v4 fingerprints the complete benchmark definition:
 profile, cases, questions, history, abstention rules, expected sources, fact expectations, chunk
 checks, and configuration. Comparison and promotion require the same definition fingerprint;
-v2 run artifacts are intentionally incompatible. Latency is shown only when hardware
+v3 run artifacts are intentionally incompatible. Latency is shown only when hardware
 fingerprints match.
 
 Hard failures cover objective contract breaches such as missing expected evidence or failed
@@ -794,15 +797,24 @@ Infrastructure failures are different. Network, HTTP, collection, configuration,
 failures abort execution, persist a run with `status: failed`, and produce the
 `raglab-evaluate: error:` diagnostic. They are not converted into low quality scores because the
 benchmark did not finish. Numeric deltas remain descriptive until tolerances are calibrated. An
-optional LLM judge is advisory: it runs after deterministic answers are saved and the generator
-is unloaded; judge failure or OOM does not invalidate the deterministic core. The judge model
-must differ from the generation model.
+optional LLM judge is an `authority: none` shadow: it runs after authoritative answers are saved
+and the generator is unloaded, and it never changes verdicts. Judge failure or OOM does not
+invalidate the deterministic core. The judge model must differ from the generation model.
 
 ```bash
 raglab-evaluate run --profile core --judge-model <different-model>
 ```
 
 RAGLab does not install or pin a second judge model in this version.
+
+Semantic rescue is disabled until calibration succeeds against the locked 96-pair fixture and a
+separate 32-pair holdout. Calibration selects the smallest zero-false-promotion threshold and
+disables rescue when the threshold is impossible, the holdout has a false promotion, or the
+pinned local model is unavailable:
+
+```bash
+raglab-evaluate calibrate-semantic --profile core
+```
 
 ## Baseline rules and CLI reference
 
@@ -821,10 +833,10 @@ cat "${RUN_JSON%.json}.md"
 raglab-evaluate baseline promote "$RUN_JSON"
 ```
 
-Evaluation run artifacts use schema v3. Packaged manifests use schema v2; external schema-v1
-manifests remain readable and are converted to one-anchor, one-variant facts internally. Existing
-v2 run artifacts remain available for manual inspection but cannot be compared or promoted. The
-first v3 baseline must be generated, reviewed, and promoted explicitly.
+Evaluation run artifacts use schema v4. Packaged manifests use schema v3; external schema-v1 and
+v2 manifests remain readable as lexical-only definitions. Existing v3 run artifacts remain
+available for manual inspection but cannot be compared or promoted. The first v4 baseline must be
+generated, reviewed, and promoted explicitly.
 
 The following comparison is **illustrative only**, not a measured RAGLab result:
 
@@ -846,6 +858,7 @@ that verdict today, but only artifacts produced by an actual run are evidence ab
 | `raglab-evaluate run --profile live` | Build the mutable-source profile after validating source hashes. |
 | `raglab-evaluate run --profile core --reuse-index` | Skip rebuilding the collection; mark the candidate partial and non-promotable. |
 | `raglab-evaluate run --profile core --judge-model MODEL` | Add non-authoritative judge observations with a model different from the generator. |
+| `raglab-evaluate calibrate-semantic --profile core` | Calibrate pinned CPU NLI rescue against locked calibration and holdout pairs; fail closed if unavailable or unsafe. |
 | `raglab-evaluate compare CANDIDATE [--baseline BASELINE]` | Compare compatible quality axes; default baseline is `artifacts/evaluation/baseline.json`. |
 | `raglab-evaluate baseline promote RUN` | Atomically replace the approved baseline after promotion checks. |
 | global `--artifact-dir PATH` | Write/read artifacts somewhere other than `artifacts/evaluation/`; place it before the subcommand. |

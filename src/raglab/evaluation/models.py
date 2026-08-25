@@ -5,12 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-RUN_SCHEMA_VERSION = 3
+RUN_SCHEMA_VERSION = 4
 PROTECTED_COLLECTION_PREFIX = "raglab-eval-"
 VERDICTS = {"improved", "regressed", "mixed", "no_clear_change"}
 RUN_JSON_SCHEMA: dict[str, Any] = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://raglab.local/schemas/evaluation-run-v3.json",
+    "$id": "https://raglab.local/schemas/evaluation-run-v4.json",
     "type": "object",
     "required": [
         "schema_version",
@@ -70,6 +70,37 @@ class FactExpectation:
     id: str
     evidence_anchors: tuple[str, ...]
     answer_variants: tuple[str, ...]
+    semantic_claim: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SemanticModelConfig:
+    name: str
+    revision: str
+    device: str
+    batch_size: int
+    max_tokens: int
+
+
+@dataclass(frozen=True, slots=True)
+class SemanticCalibrationConfig:
+    fixture: str
+    threshold: float | None
+    fingerprint: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class SemanticTemplateConfig:
+    premise: str
+    hypothesis: str
+
+
+@dataclass(frozen=True, slots=True)
+class SemanticConfig:
+    enabled: bool
+    model: SemanticModelConfig
+    calibration: SemanticCalibrationConfig
+    template: SemanticTemplateConfig
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +124,7 @@ class EvaluationManifest:
     must_keep: tuple[ChunkCheck, ...] = ()
     config: dict[str, Any] = field(default_factory=dict)
     base_path: str = ""
+    semantic: SemanticConfig | None = None
 
 
 @dataclass(frozen=True, slots=True)

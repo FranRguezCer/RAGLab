@@ -9,6 +9,10 @@ from raglab.evaluation.models import (
     EvaluationJudge,
     EvaluationManifest,
     FactExpectation,
+    SemanticCalibrationConfig,
+    SemanticConfig,
+    SemanticModelConfig,
+    SemanticTemplateConfig,
 )
 
 __all__ = [
@@ -19,6 +23,10 @@ __all__ = [
     "EvaluationJudge",
     "EvaluationManifest",
     "FactExpectation",
+    "SemanticCalibrationConfig",
+    "SemanticConfig",
+    "SemanticModelConfig",
+    "SemanticTemplateConfig",
     "HermeticEvaluationExecutor",
     "corpus_fingerprint",
     "definition_fingerprint",

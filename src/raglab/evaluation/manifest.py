@@ -19,6 +19,10 @@ from raglab.evaluation.models import (
     EvaluationManifest,
     EvaluationSource,
     FactExpectation,
+    SemanticCalibrationConfig,
+    SemanticConfig,
+    SemanticModelConfig,
+    SemanticTemplateConfig,
 )
 
 
@@ -43,7 +47,7 @@ def load_manifest(path: str | Path | None = None, *, profile: str = "core") -> E
         checks = cast(dict[str, list[dict[str, Any]]], raw.get("chunk_checks", {}))
     except (KeyError, TypeError, ValueError) as exc:
         raise EvaluationError("Evaluation manifest has an invalid top-level shape") from exc
-    if version not in {1, 2}:
+    if version not in {1, 2, 3}:
         raise EvaluationError(f"Unsupported evaluation manifest schema: {version}")
     try:
         sources = tuple(
@@ -71,6 +75,8 @@ def load_manifest(path: str | Path | None = None, *, profile: str = "core") -> E
         )
         separate = tuple(_chunk_check(row) for row in checks.get("must_separate", []))
         keep = tuple(_chunk_check(row) for row in checks.get("must_keep", []))
+        config = cast(dict[str, Any], raw.get("config", {}))
+        semantic = _semantic_config(config.get("semantic"), manifest_path.parent, version)
     except (KeyError, TypeError, ValueError) as exc:
         raise EvaluationError("Evaluation manifest contains an invalid source or case") from exc
     manifest = EvaluationManifest(
@@ -80,8 +86,9 @@ def load_manifest(path: str | Path | None = None, *, profile: str = "core") -> E
         cases,
         separate,
         keep,
-        cast(dict[str, Any], raw.get("config", {})),
+        config,
         str(manifest_path.parent.resolve()),
+        semantic,
     )
     _validate(manifest, requested_profile=profile)
     return manifest
@@ -152,6 +159,7 @@ def definition_fingerprint(manifest: EvaluationManifest) -> str:
                         "id": fact.id,
                         "evidence_anchors": list(fact.evidence_anchors),
                         "answer_variants": list(fact.answer_variants),
+                        "semantic_claim": fact.semantic_claim,
                     }
                     for fact in case.required_facts
                 ],
@@ -211,6 +219,12 @@ def _validate(manifest: EvaluationManifest, *, requested_profile: str) -> None:
                 raise EvaluationError(
                     f"Required fact {fact.id!r} needs non-empty answer variants"
                 )
+            if manifest.schema_version >= 3 and (
+                fact.semantic_claim is None or not fact.semantic_claim.strip()
+            ):
+                raise EvaluationError(
+                    f"Required fact {fact.id!r} needs a non-empty semantic_claim"
+                )
     fact_ids = [fact.id for case in manifest.cases for fact in case.required_facts]
     if len(fact_ids) != len(set(fact_ids)):
         raise EvaluationError("Required fact ids must be non-empty and unique")
@@ -264,18 +278,91 @@ def _facts(case_id: str, value: object, *, version: int) -> tuple[FactExpectatio
     facts: list[FactExpectation] = []
     for item in value:
         if not isinstance(item, dict):
-            raise EvaluationError("Manifest v2 required_facts must be objects")
+            raise EvaluationError("Manifest v2+ required_facts must be objects")
         try:
             facts.append(
                 FactExpectation(
                     id=str(item["id"]),
                     evidence_anchors=_strings(item["evidence_anchors"]),
                     answer_variants=_strings(item["answer_variants"]),
+                    semantic_claim=(
+                        str(item["semantic_claim"]) if version >= 3 else None
+                    ),
                 )
             )
         except KeyError as exc:
             raise EvaluationError("Required fact is missing a required field") from exc
     return tuple(facts)
+
+
+def _semantic_config(value: object, base_path: Path, version: int) -> SemanticConfig | None:
+    if version < 3:
+        return None
+    if not isinstance(value, dict):
+        raise EvaluationError("Manifest v3 config.semantic must be an object")
+    try:
+        model = cast(dict[str, Any], value["model"])
+        calibration = cast(dict[str, Any], value["calibration"])
+        template = cast(dict[str, Any], value["template"])
+        fixture = Path(str(calibration["fixture"]))
+        if not fixture.is_absolute():
+            fixture = (base_path / fixture).resolve()
+        result = SemanticConfig(
+            enabled=bool(value["enabled"]),
+            model=SemanticModelConfig(
+                name=str(model["name"]),
+                revision=str(model["revision"]),
+                device=str(model["device"]),
+                batch_size=int(model["batch_size"]),
+                max_tokens=int(model["max_tokens"]),
+            ),
+            calibration=SemanticCalibrationConfig(
+                fixture=str(fixture),
+                threshold=(
+                    float(calibration["threshold"])
+                    if calibration.get("threshold") is not None
+                    else None
+                ),
+                fingerprint=_optional_str(calibration.get("fingerprint")),
+            ),
+            template=SemanticTemplateConfig(
+                premise=str(template["premise"]),
+                hypothesis=str(template["hypothesis"]),
+            ),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise EvaluationError("Manifest v3 semantic config is invalid") from exc
+    from raglab.evaluation.semantic import (
+        MAX_BATCH_SIZE,
+        MAX_TOKENS,
+        SEMANTIC_MODEL,
+        SEMANTIC_REVISION,
+        calibration_fixture_fingerprint,
+    )
+
+    if (
+        result.model.name != SEMANTIC_MODEL
+        or result.model.revision != SEMANTIC_REVISION
+        or result.model.device != "cpu"
+        or not 1 <= result.model.batch_size <= MAX_BATCH_SIZE
+        or result.model.max_tokens != MAX_TOKENS
+    ):
+        raise EvaluationError("Manifest v3 semantic model configuration is not bounded")
+    if result.template.premise != "{answer}" or result.template.hypothesis != "{semantic_claim}":
+        raise EvaluationError("Manifest v3 semantic template must compare answer to semantic_claim")
+    if result.enabled and (
+        result.calibration.threshold is None or result.calibration.fingerprint is None
+    ):
+        raise EvaluationError(
+            "Enabled semantic rescue requires calibrated threshold and fingerprint"
+        )
+    if result.enabled and result.calibration.fingerprint != calibration_fixture_fingerprint(
+        result.calibration.fixture
+    ):
+        raise EvaluationError("Semantic calibration fixture fingerprint does not match")
+    if result.calibration.threshold is not None and not 0.0 <= result.calibration.threshold <= 1.0:
+        raise EvaluationError("Semantic calibration threshold must be between zero and one")
+    return result
 
 
 def _strings(value: object) -> tuple[str, ...]:

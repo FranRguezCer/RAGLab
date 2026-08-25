@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 from collections.abc import Sequence
+from dataclasses import asdict
 from pathlib import Path
 from typing import cast
 
@@ -15,6 +16,7 @@ from raglab.evaluation.application import EvaluationApplication
 from raglab.evaluation.manifest import load_manifest
 from raglab.evaluation.models import EvaluationExecutor
 from raglab.evaluation.runtime import LiveEvaluationExecutor, OllamaEvaluationJudge
+from raglab.evaluation.semantic import TransformersNLIScorer, calibrate
 from raglab.retrieval.cli import DEFAULT_DSN
 
 
@@ -60,6 +62,11 @@ def _parser() -> argparse.ArgumentParser:
     promote = baseline_subcommands.add_parser("promote", help="Promote one clean complete run")
     promote.add_argument("run", type=Path)
     promote.add_argument("--destination", type=Path)
+    calibrate_semantic = subcommands.add_parser(
+        "calibrate-semantic", help="Calibrate bounded semantic fact rescue"
+    )
+    calibrate_semantic.add_argument("--profile", choices=("core",), default="core")
+    calibrate_semantic.add_argument("--manifest", type=Path)
     return parser
 
 
@@ -88,6 +95,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                 embedding_model=args.embedding_model,
             )
             result = application.run(manifest, reuse_index=args.reuse_index)
+        elif args.command == "calibrate-semantic":
+            manifest = load_manifest(args.manifest, profile=args.profile)
+            if manifest.semantic is None:
+                raise ValueError("manifest has no semantic configuration")
+            calibration = calibrate(
+                manifest.semantic, TransformersNLIScorer(manifest.semantic)
+            )
+            result = {
+                **asdict(calibration),
+                "profile": args.profile,
+                "authority": "semantic_fact_rescue_only",
+            }
         else:
             application = EvaluationApplication(
                 cast(EvaluationExecutor, _UnavailableExecutor()),
@@ -118,6 +137,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             "error_count": sum(len(values) for values in errors.values()),
         }
     print(json.dumps(output, indent=2, sort_keys=True))
+    if args.command == "calibrate-semantic" and not result["enabled"]:
+        return 1
     if args.command == "run" and result.get("errors", {}).get("hard"):
         return 1
     return 0

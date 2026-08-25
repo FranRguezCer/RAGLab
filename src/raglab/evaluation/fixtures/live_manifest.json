@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "profile": "live",
   "config": {
     "chunking": {
@@ -10,7 +10,26 @@
       "top_k": 5,
       "specialized_vs_aggregate": true
     },
-    "generation_repetitions": 3
+    "generation_repetitions": 3,
+    "semantic": {
+      "enabled": false,
+      "model": {
+        "name": "cross-encoder/nli-deberta-v3-small",
+        "revision": "fa2804872c3b4bd748f38c0185cc85775361e735",
+        "device": "cpu",
+        "batch_size": 8,
+        "max_tokens": 512
+      },
+      "calibration": {
+        "fixture": "semantic_calibration_v1.json",
+        "threshold": null,
+        "fingerprint": null
+      },
+      "template": {
+        "premise": "{answer}",
+        "hypothesis": "{semantic_claim}"
+      }
+    }
   },
   "sources": [
     {
@@ -49,7 +68,8 @@
           ],
           "answer_variants": [
             "based solely on attention mechanisms"
-          ]
+          ],
+          "semantic_claim": "The described architecture is based solely on attention mechanisms."
         }
       ],
       "should_abstain": false,
@@ -69,7 +89,8 @@
           ],
           "answer_variants": [
             "Compute Module hardware"
-          ]
+          ],
+          "semantic_claim": "The Raspberry Pi computer family includes Compute Module hardware."
         }
       ],
       "should_abstain": false,
@@ -89,7 +110,8 @@
           ],
           "answer_variants": [
             "900 mA"
-          ]
+          ],
+          "semantic_claim": "The USB hub power limit is 900 mA."
         },
         {
           "id": "rpi-usb-hub-power-fact-2",
@@ -98,7 +120,8 @@
           ],
           "answer_variants": [
             "4.5 W"
-          ]
+          ],
+          "semantic_claim": "The USB hub power limit is 4.5 W."
         }
       ],
       "should_abstain": false,
@@ -118,7 +141,8 @@
           ],
           "answer_variants": [
             "C or C++"
-          ]
+          ],
+          "semantic_claim": "C or C++ can be used for Raspberry Pi microcontrollers."
         },
         {
           "id": "rpi-microcontroller-options-fact-2",
@@ -127,7 +151,8 @@
           ],
           "answer_variants": [
             "MicroPython"
-          ]
+          ],
+          "semantic_claim": "MicroPython can be used for Raspberry Pi microcontrollers."
         }
       ],
       "should_abstain": false,

@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "profile": "core",
   "config": {
     "chunking": {
@@ -9,7 +9,26 @@
       "candidate_k": 50,
       "top_k": 5
     },
-    "generation_repetitions": 3
+    "generation_repetitions": 3,
+    "semantic": {
+      "enabled": false,
+      "model": {
+        "name": "cross-encoder/nli-deberta-v3-small",
+        "revision": "fa2804872c3b4bd748f38c0185cc85775361e735",
+        "device": "cpu",
+        "batch_size": 8,
+        "max_tokens": 512
+      },
+      "calibration": {
+        "fixture": "semantic_calibration_v1.json",
+        "threshold": null,
+        "fingerprint": null
+      },
+      "template": {
+        "premise": "{answer}",
+        "hypothesis": "{semantic_claim}"
+      }
+    }
   },
   "sources": [
     {
@@ -93,7 +112,8 @@
           "answer_variants": [
             "raises E17",
             "raises fault E17"
-          ]
+          ],
+          "semantic_claim": "A low-flow condition raises fault E17."
         }
       ],
       "should_abstain": false
@@ -112,7 +132,8 @@
           ],
           "answer_variants": [
             "SKIPPED_WET_BED"
-          ]
+          ],
+          "semantic_claim": "A scheduled irrigation window for an already wet bed emits SKIPPED_WET_BED."
         }
       ],
       "should_abstain": false
@@ -133,7 +154,8 @@
             "it replaces device identities",
             "device identities, zone assignments, schedules, and rule settings",
             "device identities, zone assignments, schedules, and automation rules"
-          ]
+          ],
+          "semantic_claim": "Restoring a configuration backup replaces device identities, zone assignments, schedules, and automation rules."
         }
       ],
       "should_abstain": false
@@ -152,7 +174,8 @@
           ],
           "answer_variants": [
             "record fault `E41`"
-          ]
+          ],
+          "semantic_claim": "If the isolation banner does not appear, the operator must record fault E41."
         }
       ],
       "should_abstain": false
@@ -171,7 +194,8 @@
           ],
           "answer_variants": [
             "tenant ID"
-          ]
+          ],
+          "semantic_claim": "The Harbor cache key includes the tenant ID."
         },
         {
           "id": "cache-key-path",
@@ -180,7 +204,8 @@
           ],
           "answer_variants": [
             "normalized path"
-          ]
+          ],
+          "semantic_claim": "The Harbor cache key includes the normalized request path."
         },
         {
           "id": "cache-key-language",
@@ -189,7 +214,8 @@
           ],
           "answer_variants": [
             "content language"
-          ]
+          ],
+          "semantic_claim": "The Harbor cache key includes the content language."
         }
       ],
       "should_abstain": false
@@ -209,7 +235,8 @@
           "answer_variants": [
             "histogram, not a gauge",
             "use a histogram"
-          ]
+          ],
+          "semantic_claim": "Orbit records request duration with a histogram rather than a gauge."
         },
         {
           "id": "release-latency-p95",
@@ -219,7 +246,8 @@
           "answer_variants": [
             "p95 calculation",
             "calculate p95"
-          ]
+          ],
+          "semantic_claim": "Orbit calculates release latency using p95."
         }
       ],
       "should_abstain": false
@@ -238,7 +266,8 @@
           ],
           "answer_variants": [
             "alert, deployment ID, and UTC timestamp"
-          ]
+          ],
+          "semantic_claim": "Before changing Meridian, capture the alert, deployment ID, and UTC timestamp."
         }
       ],
       "should_abstain": false
@@ -259,7 +288,8 @@
           "answer_variants": [
             "purge the affected release with its surrogate keys",
             "invalidate the affected release using surrogate keys"
-          ]
+          ],
+          "semantic_claim": "After rollback, purge the affected release using its surrogate keys."
         },
         {
           "id": "incident-released-artifact",
@@ -268,7 +298,8 @@
           ],
           "answer_variants": [
             "released artifact"
-          ]
+          ],
+          "semantic_claim": "The incident record must identify the released artifact."
         }
       ],
       "should_abstain": false
@@ -287,7 +318,8 @@
           ],
           "answer_variants": [
             "must not include the Authorization header"
-          ]
+          ],
+          "semantic_claim": "The Harbor cache key must not include the Authorization header."
         }
       ],
       "should_abstain": false
@@ -313,7 +345,8 @@
           ],
           "answer_variants": [
             "roll back immediately"
-          ]
+          ],
+          "semantic_claim": "After the stated canary failure, the operator must roll back immediately."
         }
       ],
       "should_abstain": false,
@@ -336,7 +369,8 @@
           ],
           "answer_variants": [
             "user ID"
-          ]
+          ],
+          "semantic_claim": "The user ID must be removed from the proposed metric labels."
         },
         {
           "id": "metric-label-raw-path",
@@ -345,7 +379,8 @@
           ],
           "answer_variants": [
             "raw request path"
-          ]
+          ],
+          "semantic_claim": "The raw request path must be removed from the proposed metric labels."
         }
       ],
       "should_abstain": false,

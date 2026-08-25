@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import platform
 import subprocess
@@ -36,6 +37,13 @@ from raglab.evaluation.models import (
     IngestionCheckObservation,
     IngestionObservation,
     RetrievalObservation,
+    SemanticConfig,
+)
+from raglab.evaluation.semantic import (
+    SemanticScorer,
+    TransformersNLIScorer,
+    render_pair,
+    semantic_fingerprint,
 )
 
 MetadataProvider = Callable[[], dict[str, Any]]
@@ -53,6 +61,7 @@ class EvaluationApplication:
         generation_model: str = "qwen3:4b",
         embedding_model: str | None = None,
         metadata_provider: MetadataProvider | None = None,
+        semantic_scorer: SemanticScorer | None = None,
     ) -> None:
         if judge is not None and judge.model == generation_model:
             raise EvaluationError("The evaluation judge must differ from the generation model")
@@ -62,6 +71,7 @@ class EvaluationApplication:
         self.generation_model = generation_model
         self.embedding_model = embedding_model
         self.metadata_provider = metadata_provider or environment_metadata
+        self.semantic_scorer = semantic_scorer
 
     def run(
         self,
@@ -70,6 +80,7 @@ class EvaluationApplication:
         reuse_index: bool = False,
         persist: bool = True,
     ) -> dict[str, Any]:
+        self._active_manifest = manifest
         run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
         collection = f"{PROTECTED_COLLECTION_PREFIX}{manifest.profile}"
         corpus_hash, source_hashes = corpus_fingerprint(manifest)
@@ -116,7 +127,7 @@ class EvaluationApplication:
             cases=cases,
             summary=summary,
             errors=errors,
-            judge={"model": self.judge.model, "status": "pending"}
+            judge={"model": self.judge.model, "authority": "none", "status": "pending"}
             if self.judge is not None
             else None,
         )
@@ -223,6 +234,7 @@ class EvaluationApplication:
         )
         repetitions: list[dict[str, Any]] = []
         checks: list[dict[str, bool | None]] = []
+        fact_grading: list[list[dict[str, Any]]] = []
         for repetition_number in range(1, 4):
             started = time.perf_counter()
             try:
@@ -247,12 +259,16 @@ class EvaluationApplication:
                         attempt[key] = list(value) if isinstance(value, tuple) else value
                 repetitions.append(attempt)
                 checks.append(self._contract_failure_checks(case, exc))
+                fact_grading.append(self._contract_fact_grading(case, exc))
                 errors["hard"].append(
                     f"{case.id} repetition {repetition_number}: {exc}"
                 )
                 continue
-            repetition_checks = self._generation_checks(case, observation)
+            repetition_checks, repetition_grading = self._generation_checks(
+                case, observation, errors
+            )
             checks.append(repetition_checks)
+            fact_grading.append(repetition_grading)
             failed_checks = [name for name, passed in repetition_checks.items() if passed is False]
             if failed_checks:
                 reason = "Generation checks failed: " + ", ".join(failed_checks)
@@ -307,30 +323,131 @@ class EvaluationApplication:
             "generation": {
                 "repetitions": repetitions,
                 "checks": checks,
+                "fact_grading": fact_grading,
                 "stability": f"{valid_repetitions}/3",
                 "valid_repetitions": valid_repetitions,
             },
         }
 
-    @staticmethod
     def _generation_checks(
-        case: EvaluationCase, observation: GenerationObservation
-    ) -> dict[str, bool | None]:
+        self,
+        case: EvaluationCase,
+        observation: GenerationObservation,
+        errors: dict[str, list[str]],
+    ) -> tuple[dict[str, bool | None], list[dict[str, Any]]]:
         answer = normalize(observation.answer)
-        fact_checks = {
-            fact.id: any(normalize(variant) in answer for variant in fact.answer_variants)
+        lexical = [
+            any(normalize(variant) in answer for variant in fact.answer_variants)
             for fact in case.required_facts
-        }
+        ]
+        semantic_scores: list[float | None] = [None] * len(case.required_facts)
+        semantic = self._semantic_config
+        eligible = [
+            index
+            for index, passed in enumerate(lexical)
+            if not passed
+            and not case.should_abstain
+            and not observation.abstained
+            and case.required_facts[index].semantic_claim is not None
+            and semantic is not None
+            and semantic.enabled
+            and semantic.calibration.threshold is not None
+        ]
+        if eligible:
+            assert semantic is not None
+            scorer = self.semantic_scorer
+            try:
+                if scorer is None:
+                    scorer = TransformersNLIScorer(semantic)
+                    self.semantic_scorer = scorer
+                pairs = [
+                    render_pair(
+                        semantic,
+                        answer=observation.answer,
+                        claim=case.required_facts[index].semantic_claim or "",
+                    )
+                    for index in eligible
+                ]
+                scores = scorer.score(pairs)
+                if len(scores) != len(eligible):
+                    raise EvaluationError("Semantic scorer returned an invalid score count")
+                for index, score in zip(eligible, scores, strict=True):
+                    if score is not None and math.isfinite(score) and 0.0 <= score <= 1.0:
+                        semantic_scores[index] = score
+            except Exception as exc:
+                errors["advisory"].append(f"semantic {case.id}: {exc}")
+        grading: list[dict[str, Any]] = []
+        fact_checks: dict[str, bool] = {}
+        fingerprint = semantic_fingerprint(semantic) if semantic is not None else None
+        for fact, lexical_passed, score in zip(
+            case.required_facts, lexical, semantic_scores, strict=True
+        ):
+            semantic_passed = (
+                score >= semantic.calibration.threshold
+                if score is not None
+                and semantic is not None
+                and semantic.calibration.threshold is not None
+                else None
+            )
+            final = lexical_passed or semantic_passed is True
+            fact_checks[fact.id] = final
+            grading.append(
+                {
+                    "fact_id": fact.id,
+                    "lexical": lexical_passed,
+                    "semantic": semantic_passed,
+                    "final": final,
+                    "semantic_score": score,
+                    "model": semantic.model.name if semantic is not None else None,
+                    "revision": semantic.model.revision if semantic is not None else None,
+                    "fingerprint": fingerprint,
+                }
+            )
         cited = set(observation.cited_source_ids)
         citation_ok = (
             not cited if case.should_abstain else set(case.expected_source_ids) <= cited
         )
-        return {
-            "contract": True,
-            **fact_checks,
-            "abstention": observation.abstained is case.should_abstain,
-            "citations": citation_ok,
-        }
+        return (
+            {
+                "contract": True,
+                **fact_checks,
+                "abstention": observation.abstained is case.should_abstain,
+                "citations": citation_ok,
+            },
+            grading,
+        )
+
+    @property
+    def _semantic_config(self) -> SemanticConfig | None:
+        return self._active_manifest.semantic if hasattr(self, "_active_manifest") else None
+
+    def _contract_fact_grading(
+        self, case: EvaluationCase, error: GenerationContractError
+    ) -> list[dict[str, Any]]:
+        semantic = self._semantic_config
+        fingerprint = semantic_fingerprint(semantic) if semantic is not None else None
+        answer = normalize(error.answer) if error.answer is not None else None
+        return [
+            {
+                "fact_id": fact.id,
+                "lexical": (
+                    None
+                    if answer is None
+                    else any(normalize(variant) in answer for variant in fact.answer_variants)
+                ),
+                "semantic": None,
+                "final": (
+                    None
+                    if answer is None
+                    else any(normalize(variant) in answer for variant in fact.answer_variants)
+                ),
+                "semantic_score": None,
+                "model": semantic.model.name if semantic is not None else None,
+                "revision": semantic.model.revision if semantic is not None else None,
+                "fingerprint": fingerprint,
+            }
+            for fact in case.required_facts
+        ]
 
     @staticmethod
     def _contract_failure_checks(
@@ -403,6 +520,12 @@ class EvaluationApplication:
             for case in cases
             for check in case["generation"]["checks"]
         ]
+        all_fact_grading = [
+            grade
+            for case in cases
+            for repetition in case["generation"].get("fact_grading", [])
+            for grade in repetition
+        ]
         fact_ids = {
             fact_id
             for case in cases
@@ -438,6 +561,16 @@ class EvaluationApplication:
                 "generation_pass_rate": mean(generation_valid),
                 "generation_contract_rate": check_rate({"contract"}),
                 "generation_facts_rate": check_rate(fact_ids),
+                "generation_facts_lexical_rate": _grade_rate(
+                    all_fact_grading, "lexical"
+                ),
+                "generation_facts_final_rate": _grade_rate(all_fact_grading, "final"),
+                "generation_semantic_rescue_rate": _semantic_rate(
+                    all_fact_grading, rescued=True
+                ),
+                "generation_semantic_unresolved_rate": _semantic_rate(
+                    all_fact_grading, rescued=False
+                ),
                 "generation_abstention_rate": check_rate({"abstention"}),
                 "generation_citations_rate": check_rate({"citations"}),
             },
@@ -483,7 +616,7 @@ class EvaluationApplication:
                 "manifest": {
                     key: value
                     for key, value in asdict(manifest).items()
-                    if key != "base_path"
+                    if key not in {"base_path", "semantic"}
                 },
             },
         }
@@ -497,6 +630,7 @@ class EvaluationApplication:
         assert self.judge is not None
         by_id = {case.id: case for case in manifest.cases}
         judgments: list[dict[str, Any]] = []
+        judge_failed = False
         for result in cast(list[dict[str, Any]], run["cases"]):
             case = by_id[str(result["id"])]
             for repetition in result["generation"]["repetitions"]:
@@ -505,10 +639,12 @@ class EvaluationApplication:
                 try:
                     judgments.append(self.judge.evaluate(case, str(repetition["answer"])))
                 except Exception as exc:
+                    judge_failed = True
                     errors["advisory"].append(f"judge {case.id}: {exc}")
         run["judge"] = {
             "model": self.judge.model,
-            "status": "complete" if not errors["advisory"] else "partial",
+            "authority": "none",
+            "status": "partial" if judge_failed else "complete",
             "judgments": judgments,
         }
 
@@ -718,6 +854,20 @@ def _load_run(value: str | Path | Mapping[str, Any]) -> dict[str, Any]:
 def _quality_axes(run: Mapping[str, Any]) -> dict[str, float]:
     quality = cast(Mapping[str, Any], cast(Mapping[str, Any], run["summary"])["quality"])
     return {str(key): float(value) for key, value in quality.items()}
+
+
+def _grade_rate(grades: list[dict[str, Any]], field: str) -> float:
+    values = [grade[field] for grade in grades if grade.get(field) is not None]
+    return sum(value is True for value in values) / len(values) if values else 1.0
+
+
+def _semantic_rate(grades: list[dict[str, Any]], *, rescued: bool) -> float:
+    misses = [grade for grade in grades if grade.get("lexical") is False]
+    if not misses:
+        return 0.0
+    if rescued:
+        return sum(grade.get("semantic") is True for grade in misses) / len(misses)
+    return sum(grade.get("semantic") is None for grade in misses) / len(misses)
 
 
 def _atomic_write(path: Path, content: str) -> None:

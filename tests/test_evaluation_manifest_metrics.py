@@ -75,6 +75,27 @@ def test_manifest_v2_loads_distinct_evidence_anchors_and_answer_variants(
     assert fact.answer_variants == ("raises E17", "raises fault E17")
 
 
+def test_packaged_manifest_v3_loads_typed_bounded_semantic_contract() -> None:
+    manifest = load_manifest()
+    semantic = manifest.semantic
+
+    assert manifest.schema_version == 3
+    assert semantic is not None
+    assert semantic.enabled is False
+    assert semantic.model.name == "cross-encoder/nli-deberta-v3-small"
+    assert semantic.model.revision == "fa2804872c3b4bd748f38c0185cc85775361e735"
+    assert semantic.model.device == "cpu"
+    assert semantic.model.batch_size == 8
+    assert semantic.model.max_tokens == 512
+    assert semantic.template.premise == "{answer}"
+    assert semantic.template.hypothesis == "{semantic_claim}"
+    assert all(
+        fact.semantic_claim
+        for case in manifest.cases
+        for fact in case.required_facts
+    )
+
+
 @pytest.mark.parametrize(
     "facts, message",
     [

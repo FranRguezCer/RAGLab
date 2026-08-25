@@ -135,7 +135,7 @@ def test_application_runs_three_repetitions_and_persists_artifacts(tmp_path: Pat
     run = application.run(manifest)
 
     assert run["status"] == "complete"
-    assert run["schema_version"] == RUN_SCHEMA_VERSION == 3
+    assert run["schema_version"] == RUN_SCHEMA_VERSION == 4
     assert run["partial"] is False
     assert run["errors"]["hard"] == []
     assert all(case["generation"]["stability"] == "3/3" for case in run["cases"])
