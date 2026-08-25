@@ -18,6 +18,7 @@ from raglab.evaluation.models import (
     EvaluationCase,
     EvaluationManifest,
     EvaluationSource,
+    FactExpectation,
 )
 
 
@@ -42,7 +43,7 @@ def load_manifest(path: str | Path | None = None, *, profile: str = "core") -> E
         checks = cast(dict[str, list[dict[str, Any]]], raw.get("chunk_checks", {}))
     except (KeyError, TypeError, ValueError) as exc:
         raise EvaluationError("Evaluation manifest has an invalid top-level shape") from exc
-    if version != 1:
+    if version not in {1, 2}:
         raise EvaluationError(f"Unsupported evaluation manifest schema: {version}")
     try:
         sources = tuple(
@@ -59,7 +60,9 @@ def load_manifest(path: str | Path | None = None, *, profile: str = "core") -> E
                 id=str(row["id"]),
                 query=str(row["query"]),
                 expected_source_ids=_strings(row.get("expected_source_ids", [])),
-                required_facts=_strings(row.get("required_facts", [])),
+                required_facts=_facts(
+                    str(row["id"]), row.get("required_facts", []), version=version
+                ),
                 should_abstain=bool(row.get("should_abstain", False)),
                 history=_strings(row.get("history", [])),
                 domain=_optional_str(row.get("domain")),
@@ -124,6 +127,50 @@ def corpus_fingerprint(manifest: EvaluationManifest) -> tuple[str, dict[str, str
     return hashlib.sha256(payload.encode()).hexdigest(), hashes
 
 
+def definition_fingerprint(manifest: EvaluationManifest) -> str:
+    """Hash the complete semantic benchmark definition, excluding its disk location."""
+
+    payload = {
+        "schema_version": manifest.schema_version,
+        "profile": manifest.profile,
+        "sources": [
+            {
+                "id": source.id,
+                "location": source.location,
+                "sha256": source.sha256,
+                "domain": source.domain,
+            }
+            for source in manifest.sources
+        ],
+        "cases": [
+            {
+                "id": case.id,
+                "query": case.query,
+                "expected_source_ids": list(case.expected_source_ids),
+                "required_facts": [
+                    {
+                        "id": fact.id,
+                        "evidence_anchors": list(fact.evidence_anchors),
+                        "answer_variants": list(fact.answer_variants),
+                    }
+                    for fact in case.required_facts
+                ],
+                "should_abstain": case.should_abstain,
+                "history": list(case.history),
+                "domain": case.domain,
+            }
+            for case in manifest.cases
+        ],
+        "chunk_checks": {
+            "must_separate": [_chunk_check_payload(check) for check in manifest.must_separate],
+            "must_keep": [_chunk_check_payload(check) for check in manifest.must_keep],
+        },
+        "config": manifest.config,
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
 def _validate(manifest: EvaluationManifest, *, requested_profile: str) -> None:
     if manifest.profile != requested_profile:
         raise EvaluationError(
@@ -149,6 +196,24 @@ def _validate(manifest: EvaluationManifest, *, requested_profile: str) -> None:
             raise EvaluationError(f"Live evaluation case {case.id!r} needs a domain")
         if case.should_abstain and (case.expected_source_ids or case.required_facts):
             raise EvaluationError(f"Abstention case {case.id!r} cannot require evidence")
+        for fact in case.required_facts:
+            if not fact.id.strip():
+                raise EvaluationError("Required fact ids must be non-empty and unique")
+            if not fact.evidence_anchors or any(
+                not anchor.strip() for anchor in fact.evidence_anchors
+            ):
+                raise EvaluationError(
+                    f"Required fact {fact.id!r} needs non-empty evidence anchors"
+                )
+            if not fact.answer_variants or any(
+                not variant.strip() for variant in fact.answer_variants
+            ):
+                raise EvaluationError(
+                    f"Required fact {fact.id!r} needs non-empty answer variants"
+                )
+    fact_ids = [fact.id for case in manifest.cases for fact in case.required_facts]
+    if len(fact_ids) != len(set(fact_ids)):
+        raise EvaluationError("Required fact ids must be non-empty and unique")
     for check in (*manifest.must_separate, *manifest.must_keep):
         if check.source_id not in known:
             raise EvaluationError(f"Chunk check {check.id!r} references an unknown source")
@@ -170,6 +235,47 @@ def _chunk_check(row: dict[str, Any]) -> ChunkCheck:
         )
     except KeyError as exc:
         raise EvaluationError("Chunk check is missing a required field") from exc
+
+
+def _chunk_check_payload(check: ChunkCheck) -> dict[str, str]:
+    return {
+        "id": check.id,
+        "source_id": check.source_id,
+        "left_anchor": check.left_anchor,
+        "right_anchor": check.right_anchor,
+        "reason": check.reason,
+    }
+
+
+def _facts(case_id: str, value: object, *, version: int) -> tuple[FactExpectation, ...]:
+    if not isinstance(value, list):
+        raise EvaluationError("Expected required_facts to be a list")
+    if version == 1:
+        if not all(isinstance(item, str) for item in value):
+            raise EvaluationError("Manifest v1 required_facts must be strings")
+        return tuple(
+            FactExpectation(
+                id=f"{case_id}-fact-{index}",
+                evidence_anchors=(item,),
+                answer_variants=(item,),
+            )
+            for index, item in enumerate(value, start=1)
+        )
+    facts: list[FactExpectation] = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise EvaluationError("Manifest v2 required_facts must be objects")
+        try:
+            facts.append(
+                FactExpectation(
+                    id=str(item["id"]),
+                    evidence_anchors=_strings(item["evidence_anchors"]),
+                    answer_variants=_strings(item["answer_variants"]),
+                )
+            )
+        except KeyError as exc:
+            raise EvaluationError("Required fact is missing a required field") from exc
+    return tuple(facts)
 
 
 def _strings(value: object) -> tuple[str, ...]:

@@ -674,7 +674,7 @@ promoting it.
 # 1. Rebuild the protected core collection and create a candidate.
 raglab-evaluate run --profile core
 
-# Use the run_id printed above.
+# The compact JSON printed above includes run_id and both artifact paths.
 RUN_JSON=artifacts/evaluation/20260820T123456.000000Z.json
 
 # 2. Inspect the JSON for machines and the Markdown summary for humans.
@@ -724,10 +724,13 @@ pipeline.
 | `core` | Authoritative, reproducible benchmark over tracked fixtures; judge disabled by default | PostgreSQL, Ollama, and BGE |
 | `live` | Optional reality check over Attention and one source from each Raspberry Pi domain | Core services, an absolute PDF path, and network access |
 
-The core manifest uses semantic percentile `85`, four Aster questions and chunk controls, three
-short technical sources, distractor and abstention cases, multi-evidence retrieval, and two
-multi-turn cases. Each case runs approximate and exact retrieval once each, then generates three
-times. The core without a judge is designed to finish in less than 15 minutes.
+The core manifest uses schema v2. Each required fact has a stable ID, one or more
+`evidence_anchors` for retrieval, and deterministic `answer_variants` for generation. This keeps
+the text that proves evidence separate from the equivalent wording an answer may use. The
+manifest also fixes semantic percentile `85`, four Aster questions and chunk controls, three short
+technical sources, distractor and abstention cases, multi-evidence retrieval, and two multi-turn
+cases. Each case runs approximate and exact retrieval once each, then generates three times. The
+core without a judge is designed to finish in less than 15 minutes.
 
 The live profile compares domain-specific Raspberry Pi collections with an aggregate collection.
 It hashes every source and rejects a changed live source instead of pretending it is comparable:
@@ -745,34 +748,37 @@ their recorded hashes are part of the evidence.
 
 | Boundary | Recorded evidence |
 | -------- | ----------------- |
-| Ingestion | Must-separate and must-keep checks, document/chunk counts, token distribution, latency |
-| Retrieval | Hit@1/3/5, Recall@5, MRR, nDCG@5, exact-versus-HNSW agreement, latency |
-| Generation | Required facts, abstention, source/citation checks, stability across 3 runs, tokens, calls, latency |
+| Ingestion | Named must-separate and must-keep checks, separate cohesion/separation rates, document/chunk counts, token distribution, latency |
+| Retrieval | Evidence Hit@1/3/5, Recall@5 and MRR; source metrics and bounded nDCG@5 as diagnostics; exact-versus-HNSW agreement; latency |
+| Generation | Contract, facts by ID, abstention, and citation checks; component rates and fail-closed pass rate; stability across 3 runs; tokens, calls, latency |
 | Operation | Hard and advisory errors plus p50/p95 retrieval and generation latency |
 
 The quality metrics answer different questions:
 
-- **Hit@K** is `1` when at least one relevant source appears in the first K results, otherwise `0`.
-- **Recall@5** is the fraction of all expected sources found in the first five results.
-- **MRR** is the reciprocal rank of the first relevant result; rank 1 scores `1`, rank 2 scores
-  `0.5`, and no relevant result scores `0`.
-- **nDCG@5** rewards relevant sources more when they appear near the top and divides that discounted
-  gain by the best possible ordering, producing a score from `0` to `1`.
-- **Generation pass rate** is the fraction of the three repetitions that pass every required-fact,
-  abstention, and citation check.
-- **Ingestion checks** are the fraction of declared must-separate and must-keep boundaries that
-  pass after chunking.
+- **Hit@K** is `1` when at least one required fact is covered in the first K results, otherwise `0`.
+- **Recall@5** is the fraction of all required facts covered in the first five results.
+- **MRR** is the reciprocal rank of the first result covering required evidence; rank 1 scores
+  `1`, rank 2 scores `0.5`, and no relevant result scores `0`.
+- **Source nDCG@5** is diagnostic. It counts each relevant source once, rewards earlier ranks, and
+  is always between `0` and `1`.
+- **Generation pass rate** remains fail-closed: a repetition passes only when its contract, facts,
+  abstention, and citation checks pass. Component rates show which boundary failed. Individual
+  checks use `true`, `false`, or `null`; `null` means an invalid contract made that check
+  impossible to evaluate, not that the check failed independently.
+- **Ingestion separation/cohesion rates** report must-separate and must-keep boundaries
+  independently. Each check records its ID, type, reason, result, and stable chunk references.
 
-For example, suppose the expected sources are `A` and `B`, while the first five results are
-`[X, A, Y, B, Z]`. Hit@1 is `0`, Hit@3 and Hit@5 are `1`, Recall@5 is `2 / 2 = 1`, MRR is
-`1 / 2 = 0.5`, and nDCG@5 is approximately `0.65` because both sources were found but neither is
-ideally ranked. If two of three generation repetitions pass, their pass rate is `2 / 3 ≈ 0.67`.
-If five of six chunk-boundary checks pass, the ingestion-check score is `5 / 6 ≈ 0.83`.
+Cases without required facts, including abstention cases, record evidence retrieval metrics as
+`null` and do not inflate the summary. Each retrieval rank persists the covered fact IDs and a
+stable chunk reference such as `aster-manual:3-4`. Approximate-versus-exact agreement uses those
+references rather than ephemeral database UUIDs.
 
 Ground truth names evidence with versioned `source_id` values and normalized text anchors, never
-ephemeral PostgreSQL UUIDs. Quality comparison requires the same run schema, profile, corpus
-fingerprint, and configuration fingerprint. Latency is shown only when hardware fingerprints
-match.
+ephemeral PostgreSQL UUIDs. Run schema v3 fingerprints the complete benchmark definition:
+profile, cases, questions, history, abstention rules, expected sources, fact expectations, chunk
+checks, and configuration. Comparison and promotion require the same definition fingerprint;
+v2 run artifacts are intentionally incompatible. Latency is shown only when hardware
+fingerprints match.
 
 Hard failures cover objective contract breaches such as missing expected evidence or failed
 fact, abstention, or citation checks. A completed model response that violates JSON, fact,
@@ -812,15 +818,17 @@ cat "${RUN_JSON%.json}.md"
 raglab-evaluate baseline promote "$RUN_JSON"
 ```
 
-Evaluation run artifacts use schema v2 so each generation repetition can record success or
-diagnostic failure data. The manifest schema remains v1. Regenerate any run-schema-v1 baseline
-before comparing or promoting it; cross-schema comparisons are rejected.
+Evaluation run artifacts use schema v3. Packaged manifests use schema v2; external schema-v1
+manifests remain readable and are converted to one-anchor, one-variant facts internally. Existing
+v2 run artifacts remain available for manual inspection but cannot be compared or promoted. The
+first v3 baseline must be generated, reviewed, and promoted explicitly.
 
 The following comparison is **illustrative only**, not a measured RAGLab result:
 
 | Quality axis | Baseline | Candidate | Delta |
 | ------------ | -------: | --------: | ----: |
-| Ingestion checks | 1.00 | 1.00 | 0.00 |
+| Ingestion separation | 1.00 | 1.00 | 0.00 |
+| Ingestion cohesion | 1.00 | 1.00 | 0.00 |
 | Retrieval Recall@5 | 0.92 | 1.00 | +0.08 |
 | Retrieval MRR | 0.88 | 0.90 | +0.02 |
 | Generation pass rate | 0.97 | 0.94 | -0.03 |
@@ -831,6 +839,7 @@ that verdict today, but only artifacts produced by an actual run are evidence ab
 | Command | Meaning |
 | ------- | ------- |
 | `raglab-evaluate run --profile core` | Rebuild the core evaluation collection and write versioned JSON and Markdown artifacts. |
+| `raglab-evaluate run --profile core --full-json` | Print the complete run payload instead of the default compact JSON summary. |
 | `raglab-evaluate run --profile live` | Build the mutable-source profile after validating source hashes. |
 | `raglab-evaluate run --profile core --reuse-index` | Skip rebuilding the collection; mark the candidate partial and non-promotable. |
 | `raglab-evaluate run --profile core --judge-model MODEL` | Add non-authoritative judge observations with a model different from the generator. |
@@ -838,9 +847,14 @@ that verdict today, but only artifacts produced by an actual run are evidence ab
 | `raglab-evaluate baseline promote RUN` | Atomically replace the approved baseline after promotion checks. |
 | global `--artifact-dir PATH` | Write/read artifacts somewhere other than `artifacts/evaluation/`; place it before the subcommand. |
 
-Every run artifact records the schema version, Git commit and dirty state, model names, hardware,
-configuration and corpus fingerprints, per-source hashes, results, timings, and errors. The JSON
-schema is exported as `raglab.evaluation.RUN_JSON_SCHEMA`; application integrations can import
+By default, `run` prints compact JSON containing `run_id`, artifact paths, status, quality axes,
+and error counts. The complete payload remains in the JSON artifact; use `--full-json` when a
+caller explicitly needs it on stdout. A completed run with hard quality failures is still
+persisted and exits with status `1`.
+
+Every run artifact records the schema and definition fingerprint, Git commit and dirty state,
+model names, hardware, per-source hashes, results, timings, and errors. The JSON schema is
+exported as `raglab.evaluation.RUN_JSON_SCHEMA`; application integrations can import
 `EvaluationApplication` and optional judges implement `EvaluationJudge`.
 
 ## `04_rag_evaluation.ipynb`
@@ -861,6 +875,8 @@ The optional appendix leaves the authoritative service-backed run to the CLI:
 
 ```bash
 raglab-evaluate run --profile core
+# Opt in only when the complete payload is needed on stdout.
+raglab-evaluate run --profile core --full-json
 ```
 
 # Appendix A — Test strategy and suite

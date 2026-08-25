@@ -1,13 +1,14 @@
 """Public API for reproducible RAG evaluation."""
 
 from raglab.evaluation.application import EvaluationApplication, HermeticEvaluationExecutor
-from raglab.evaluation.manifest import corpus_fingerprint, load_manifest
+from raglab.evaluation.manifest import corpus_fingerprint, definition_fingerprint, load_manifest
 from raglab.evaluation.models import (
     RUN_JSON_SCHEMA,
     RUN_SCHEMA_VERSION,
     EvaluationCase,
     EvaluationJudge,
     EvaluationManifest,
+    FactExpectation,
 )
 
 __all__ = [
@@ -17,7 +18,9 @@ __all__ = [
     "EvaluationCase",
     "EvaluationJudge",
     "EvaluationManifest",
+    "FactExpectation",
     "HermeticEvaluationExecutor",
     "corpus_fingerprint",
+    "definition_fingerprint",
     "load_manifest",
 ]

@@ -32,6 +32,11 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--profile", choices=("core", "live"), default="core")
     run.add_argument("--manifest", type=Path)
     run.add_argument("--reuse-index", action="store_true")
+    run.add_argument(
+        "--full-json",
+        action="store_true",
+        help="Print the complete run payload instead of the compact candidate receipt",
+    )
     run.add_argument("--judge-model")
     run.add_argument("--dsn", default=os.environ.get("RAGLAB_DSN", DEFAULT_DSN))
     run.add_argument(
@@ -98,7 +103,21 @@ def main(argv: Sequence[str] | None = None) -> int:
                 result = {"baseline": str(destination)}
     except (RagLabError, RuntimeError, ValueError, OSError) as exc:
         parser.exit(1, f"raglab-evaluate: error: {exc}\n")
-    print(json.dumps(result, indent=2, sort_keys=True))
+    output = result
+    if args.command == "run" and not args.full_json:
+        run_id = str(result["run_id"])
+        errors = result.get("errors", {})
+        output = {
+            "run_id": run_id,
+            "artifacts": {
+                "json": str(args.artifact_dir / f"{run_id}.json"),
+                "markdown": str(args.artifact_dir / f"{run_id}.md"),
+            },
+            "status": result["status"],
+            "quality": result.get("summary", {}).get("quality", {}),
+            "error_count": sum(len(values) for values in errors.values()),
+        }
+    print(json.dumps(output, indent=2, sort_keys=True))
     if args.command == "run" and result.get("errors", {}).get("hard"):
         return 1
     return 0

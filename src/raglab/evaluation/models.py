@@ -5,12 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-RUN_SCHEMA_VERSION = 2
+RUN_SCHEMA_VERSION = 3
 PROTECTED_COLLECTION_PREFIX = "raglab-eval-"
 VERDICTS = {"improved", "regressed", "mixed", "no_clear_change"}
 RUN_JSON_SCHEMA: dict[str, Any] = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://raglab.local/schemas/evaluation-run-v2.json",
+    "$id": "https://raglab.local/schemas/evaluation-run-v3.json",
     "type": "object",
     "required": [
         "schema_version",
@@ -21,6 +21,7 @@ RUN_JSON_SCHEMA: dict[str, Any] = {
         "metadata",
         "corpus",
         "config",
+        "definition",
         "ingestion",
         "cases",
         "summary",
@@ -35,6 +36,7 @@ RUN_JSON_SCHEMA: dict[str, Any] = {
         "metadata": {"type": "object"},
         "corpus": {"type": "object"},
         "config": {"type": "object"},
+        "definition": {"type": "object"},
         "ingestion": {"type": "object"},
         "cases": {"type": "array"},
         "summary": {"type": "object"},
@@ -62,11 +64,20 @@ class ChunkCheck:
 
 
 @dataclass(frozen=True, slots=True)
+class FactExpectation:
+    """Deterministic evidence and answer expectations for one benchmark fact."""
+
+    id: str
+    evidence_anchors: tuple[str, ...]
+    answer_variants: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class EvaluationCase:
     id: str
     query: str
     expected_source_ids: tuple[str, ...]
-    required_facts: tuple[str, ...]
+    required_facts: tuple[FactExpectation, ...]
     should_abstain: bool = False
     history: tuple[str, ...] = ()
     domain: str | None = None
@@ -90,6 +101,8 @@ class RetrievalObservation:
     anchors_by_rank: tuple[tuple[str, ...], ...]
     latency_ms: float
     aggregate_source_ids: tuple[str, ...] = ()
+    stable_references: tuple[str, ...] = ()
+    fact_ids_by_rank: tuple[tuple[str, ...], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,6 +126,18 @@ class IngestionObservation:
     cohesion_passed: int
     cohesion_total: int
     latency_ms: float
+    checks: tuple[IngestionCheckObservation, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class IngestionCheckObservation:
+    """Result of one named chunk-boundary expectation."""
+
+    id: str
+    type: str
+    passed: bool
+    reason: str
+    chunk_references: tuple[str, ...] = ()
 
 
 class EvaluationExecutor(Protocol):

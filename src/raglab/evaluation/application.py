@@ -16,9 +16,10 @@ from statistics import mean
 from typing import Any, cast
 
 from raglab.errors import EvaluationError, GenerationContractError
-from raglab.evaluation.manifest import corpus_fingerprint
+from raglab.evaluation.manifest import corpus_fingerprint, definition_fingerprint
 from raglab.evaluation.metrics import (
     conservative_verdict,
+    evidence_retrieval_metrics,
     latency_summary,
     normalize,
     percentile,
@@ -32,6 +33,7 @@ from raglab.evaluation.models import (
     EvaluationJudge,
     EvaluationManifest,
     GenerationObservation,
+    IngestionCheckObservation,
     IngestionObservation,
     RetrievalObservation,
 )
@@ -72,6 +74,7 @@ class EvaluationApplication:
         collection = f"{PROTECTED_COLLECTION_PREFIX}{manifest.profile}"
         corpus_hash, source_hashes = corpus_fingerprint(manifest)
         config_hash = _hash_json(manifest.config)
+        benchmark_hash = definition_fingerprint(manifest)
         metadata = self.metadata_provider()
         metadata["generation_model"] = self.generation_model
         if self.embedding_model is not None:
@@ -88,7 +91,8 @@ class EvaluationApplication:
             cases = [self._run_case(case, collection, errors) for case in manifest.cases]
         except Exception as exc:
             failed = self._base_run(
-                run_id, manifest, reuse_index, metadata, corpus_hash, source_hashes, config_hash
+                run_id, manifest, reuse_index, metadata, corpus_hash, source_hashes, config_hash,
+                benchmark_hash,
             )
             failed.update(
                 status="failed",
@@ -103,7 +107,8 @@ class EvaluationApplication:
 
         summary = self._summary(ingestion, cases)
         run = self._base_run(
-            run_id, manifest, reuse_index, metadata, corpus_hash, source_hashes, config_hash
+            run_id, manifest, reuse_index, metadata, corpus_hash, source_hashes, config_hash,
+            benchmark_hash,
         )
         run.update(
             status="complete",
@@ -168,18 +173,30 @@ class EvaluationApplication:
         destination: str | Path | None = None,
     ) -> Path:
         payload = _load_run(run)
+        target = Path(destination) if destination else self.artifact_dir / "baseline.json"
         reasons: list[str] = []
         if payload.get("status") != "complete":
             reasons.append("run is not complete")
+        if payload.get("schema_version") != RUN_SCHEMA_VERSION:
+            reasons.append(f"run must use schema v{RUN_SCHEMA_VERSION}")
+        if not payload.get("definition", {}).get("fingerprint"):
+            reasons.append("run has no benchmark definition fingerprint")
         if payload.get("partial") is True:
             reasons.append("runs created with --reuse-index are not promotable")
         if payload.get("metadata", {}).get("dirty") is not False:
             reasons.append("Git worktree was dirty or could not be verified")
         if payload.get("errors", {}).get("hard"):
             reasons.append("run contains hard failures")
+        if target.exists():
+            baseline = _load_run(target)
+            if baseline.get("schema_version") != RUN_SCHEMA_VERSION:
+                reasons.append(f"existing baseline must use schema v{RUN_SCHEMA_VERSION}")
+            elif baseline.get("definition", {}).get("fingerprint") != payload.get(
+                "definition", {}
+            ).get("fingerprint"):
+                reasons.append("benchmark definition fingerprint differs from existing baseline")
         if reasons:
             raise EvaluationError("Cannot promote baseline: " + "; ".join(reasons))
-        target = Path(destination) if destination else self.artifact_dir / "baseline.json"
         _atomic_write(target, json.dumps(payload, indent=2, sort_keys=True) + "\n")
         return target
 
@@ -188,10 +205,13 @@ class EvaluationApplication:
     ) -> dict[str, Any]:
         approximate = self.executor.retrieve(case, collection=collection, exact=False)
         exact = self.executor.retrieve(case, collection=collection, exact=True)
-        metrics = retrieval_metrics(approximate.source_ids, case.expected_source_ids)
+        source_metrics = retrieval_metrics(approximate.source_ids, case.expected_source_ids)
+        metrics = evidence_retrieval_metrics(
+            approximate.fact_ids_by_rank, tuple(fact.id for fact in case.required_facts)
+        )
         exact_agreement = len(
-            set(approximate.source_ids[:5]) & set(exact.source_ids[:5])
-        ) / max(1, len(set(exact.source_ids[:5])))
+            set(approximate.stable_references[:5]) & set(exact.stable_references[:5])
+        ) / max(1, len(set(exact.stable_references[:5])))
         aggregate_agreement = (
             len(
                 set(approximate.source_ids[:5])
@@ -202,7 +222,7 @@ class EvaluationApplication:
             else None
         )
         repetitions: list[dict[str, Any]] = []
-        checks: list[dict[str, bool]] = []
+        checks: list[dict[str, bool | None]] = []
         for repetition_number in range(1, 4):
             started = time.perf_counter()
             try:
@@ -226,16 +246,14 @@ class EvaluationApplication:
                     if value is not None:
                         attempt[key] = list(value) if isinstance(value, tuple) else value
                 repetitions.append(attempt)
-                checks.append(
-                    {"required_facts": False, "abstention": False, "citations": False}
-                )
+                checks.append(self._contract_failure_checks(case, exc))
                 errors["hard"].append(
                     f"{case.id} repetition {repetition_number}: {exc}"
                 )
                 continue
             repetition_checks = self._generation_checks(case, observation)
             checks.append(repetition_checks)
-            failed_checks = [name for name, passed in repetition_checks.items() if not passed]
+            failed_checks = [name for name, passed in repetition_checks.items() if passed is False]
             if failed_checks:
                 reason = "Generation checks failed: " + ", ".join(failed_checks)
                 repetitions.append(
@@ -246,19 +264,42 @@ class EvaluationApplication:
                 )
             else:
                 repetitions.append({"status": "passed", **asdict(observation)})
-        valid_repetitions = sum(all(check.values()) for check in checks)
-        if metrics["recall_at_5"] < 1.0 and not case.should_abstain:
+        valid_repetitions = sum(all(value is True for value in check.values()) for check in checks)
+        if metrics["recall_at_5"] is not None and metrics["recall_at_5"] < 1.0:
             errors["hard"].append(f"{case.id}: expected evidence was not retrieved")
+        found_facts = sorted(
+            {fact_id for row in approximate.fact_ids_by_rank[:5] for fact_id in row}
+        )
+        required_fact_ids = [fact.id for fact in case.required_facts]
         return {
             "id": case.id,
             "query": case.query,
             "history": list(case.history),
             "retrieval": {
                 "source_ids": list(approximate.source_ids),
+                "ranges": [
+                    {
+                        "reference": reference,
+                        "source_id": source_id,
+                        "fact_ids": list(fact_ids),
+                    }
+                    for reference, source_id, fact_ids in zip(
+                        approximate.stable_references,
+                        approximate.source_ids,
+                        approximate.fact_ids_by_rank,
+                        strict=False,
+                    )
+                ],
                 "exact_source_ids": list(exact.source_ids),
+                "exact_references": list(exact.stable_references),
                 "aggregate_source_ids": list(approximate.aggregate_source_ids),
                 "specialized_vs_aggregate_agreement_at_5": aggregate_agreement,
                 "metrics": metrics,
+                "source_metrics": source_metrics,
+                "facts_found": found_facts,
+                "facts_missing": [
+                    fact_id for fact_id in required_fact_ids if fact_id not in found_facts
+                ],
                 "exact_agreement_at_5": exact_agreement,
                 "latency_ms": approximate.latency_ms,
                 "exact_latency_ms": exact.latency_ms,
@@ -274,24 +315,59 @@ class EvaluationApplication:
     @staticmethod
     def _generation_checks(
         case: EvaluationCase, observation: GenerationObservation
-    ) -> dict[str, bool]:
+    ) -> dict[str, bool | None]:
         answer = normalize(observation.answer)
-        facts = all(normalize(fact) in answer for fact in case.required_facts)
+        fact_checks = {
+            fact.id: any(normalize(variant) in answer for variant in fact.answer_variants)
+            for fact in case.required_facts
+        }
         cited = set(observation.cited_source_ids)
         citation_ok = (
             not cited if case.should_abstain else set(case.expected_source_ids) <= cited
         )
         return {
-            "required_facts": facts,
+            "contract": True,
+            **fact_checks,
             "abstention": observation.abstained is case.should_abstain,
             "citations": citation_ok,
         }
 
     @staticmethod
+    def _contract_failure_checks(
+        case: EvaluationCase, error: GenerationContractError
+    ) -> dict[str, bool | None]:
+        answer = normalize(error.answer) if error.answer is not None else None
+        cited = set(error.cited_source_ids) if error.cited_source_ids is not None else None
+        checks: dict[str, bool | None] = {"contract": False}
+        checks.update(
+            {
+                fact.id: (
+                    None
+                    if answer is None
+                    else any(normalize(variant) in answer for variant in fact.answer_variants)
+                )
+                for fact in case.required_facts
+            }
+        )
+        checks["abstention"] = (
+            None if error.abstained is None else error.abstained is case.should_abstain
+        )
+        checks["citations"] = (
+            None
+            if cited is None
+            else (not cited if case.should_abstain else set(case.expected_source_ids) <= cited)
+        )
+        return checks
+
+    @staticmethod
     def _summary(
         ingestion: IngestionObservation, cases: list[dict[str, Any]]
     ) -> dict[str, Any]:
-        retrieval = [cast(dict[str, float], case["retrieval"]["metrics"]) for case in cases]
+        retrieval = [
+            cast(dict[str, float], case["retrieval"]["metrics"])
+            for case in cases
+            if case["retrieval"]["metrics"]["recall_at_5"] is not None
+        ]
         generation_valid = [
             int(case["generation"]["valid_repetitions"]) / 3 for case in cases
         ]
@@ -322,12 +398,48 @@ class EvaluationApplication:
         )
         checks_total = ingestion.separation_total + ingestion.cohesion_total
         checks_passed = ingestion.separation_passed + ingestion.cohesion_passed
+        all_checks = [
+            check
+            for case in cases
+            for check in case["generation"]["checks"]
+        ]
+        fact_ids = {
+            fact_id
+            for case in cases
+            for fact_id in case["retrieval"]["facts_found"] + case["retrieval"]["facts_missing"]
+        }
+
+        def check_rate(names: set[str]) -> float:
+            values = [
+                value
+                for check in all_checks
+                for name, value in check.items()
+                if name in names and value is not None
+            ]
+            return sum(value is True for value in values) / len(values) if values else 1.0
+
         return {
             "quality": {
                 "ingestion_checks": checks_passed / checks_total if checks_total else 1.0,
-                "retrieval_recall_at_5": mean(item["recall_at_5"] for item in retrieval),
-                "retrieval_mrr": mean(item["mrr"] for item in retrieval),
+                "ingestion_separation_rate": (
+                    ingestion.separation_passed / ingestion.separation_total
+                    if ingestion.separation_total
+                    else 1.0
+                ),
+                "ingestion_cohesion_rate": (
+                    ingestion.cohesion_passed / ingestion.cohesion_total
+                    if ingestion.cohesion_total
+                    else 1.0
+                ),
+                "retrieval_recall_at_5": (
+                    mean(item["recall_at_5"] for item in retrieval) if retrieval else 1.0
+                ),
+                "retrieval_mrr": mean(item["mrr"] for item in retrieval) if retrieval else 1.0,
                 "generation_pass_rate": mean(generation_valid),
+                "generation_contract_rate": check_rate({"contract"}),
+                "generation_facts_rate": check_rate(fact_ids),
+                "generation_abstention_rate": check_rate({"abstention"}),
+                "generation_citations_rate": check_rate({"citations"}),
             },
             "latency": {
                 "ingestion_ms": ingestion.latency_ms,
@@ -355,6 +467,7 @@ class EvaluationApplication:
         corpus_hash: str,
         source_hashes: dict[str, str],
         config_hash: str,
+        definition_hash: str,
     ) -> dict[str, Any]:
         return {
             "schema_version": RUN_SCHEMA_VERSION,
@@ -365,6 +478,14 @@ class EvaluationApplication:
             "metadata": metadata,
             "corpus": {"fingerprint": corpus_hash, "sources": source_hashes},
             "config": {"fingerprint": config_hash, "values": manifest.config},
+            "definition": {
+                "fingerprint": definition_hash,
+                "manifest": {
+                    key: value
+                    for key, value in asdict(manifest).items()
+                    if key != "base_path"
+                },
+            },
         }
 
     def _run_judge(
@@ -393,20 +514,30 @@ class EvaluationApplication:
 
     @staticmethod
     def _validate_comparison(candidate: dict[str, Any], baseline: dict[str, Any]) -> None:
+        if (
+            candidate.get("schema_version") != RUN_SCHEMA_VERSION
+            or baseline.get("schema_version") != RUN_SCHEMA_VERSION
+        ):
+            raise EvaluationError(f"Only schema v{RUN_SCHEMA_VERSION} runs can be compared")
         if candidate.get("status") != "complete" or baseline.get("status") != "complete":
             raise EvaluationError("Only complete evaluation runs can be compared")
-        if candidate.get("schema_version") != baseline.get("schema_version"):
-            raise EvaluationError("Run schema versions are incompatible")
+        for label, run in (("candidate", candidate), ("baseline", baseline)):
+            if run.get("partial") is True:
+                raise EvaluationError(f"The {label} run is partial")
+            if run.get("metadata", {}).get("dirty") is not False:
+                raise EvaluationError(f"The {label} run is dirty or unverifiable")
+            if run.get("errors", {}).get("hard"):
+                raise EvaluationError(f"The {label} run contains hard failures")
         if candidate.get("profile") != baseline.get("profile"):
             raise EvaluationError("Evaluation profiles are incompatible")
         if candidate.get("corpus", {}).get("fingerprint") != baseline.get("corpus", {}).get(
             "fingerprint"
         ):
             raise EvaluationError("Corpus fingerprints differ; quality cannot be compared")
-        if candidate.get("config", {}).get("fingerprint") != baseline.get("config", {}).get(
-            "fingerprint"
-        ):
-            raise EvaluationError("Evaluation configurations differ; quality cannot be compared")
+        if candidate.get("definition", {}).get("fingerprint") != baseline.get(
+            "definition", {}
+        ).get("fingerprint"):
+            raise EvaluationError("Benchmark definition fingerprints differ")
 
     def _write_artifacts(self, run: dict[str, Any]) -> None:
         stem = str(run["run_id"])
@@ -438,6 +569,20 @@ class HermeticEvaluationExecutor:
             len(manifest.must_keep),
             len(manifest.must_keep),
             10.0 * self.latency_scale,
+            tuple(
+                IngestionCheckObservation(
+                    check.id,
+                    check_type,
+                    True,
+                    check.reason,
+                    (),
+                )
+                for check_type, configured in (
+                    ("must_separate", manifest.must_separate),
+                    ("must_keep", manifest.must_keep),
+                )
+                for check in configured
+            ),
         )
 
     def retrieve(
@@ -446,9 +591,19 @@ class HermeticEvaluationExecutor:
         del collection
         return RetrievalObservation(
             case.expected_source_ids,
-            tuple(() for _ in case.expected_source_ids),
+            tuple(
+                tuple(anchor for fact in case.required_facts for anchor in fact.evidence_anchors)
+                if index == 0
+                else ()
+                for index, _ in enumerate(case.expected_source_ids)
+            ),
             (2.0 if exact else 1.0) * self.latency_scale,
             case.expected_source_ids if self.profile == "live" else (),
+            tuple(f"{source_id}:0-0" for source_id in case.expected_source_ids),
+            tuple(
+                tuple(fact.id for fact in case.required_facts) if index == 0 else ()
+                for index, _ in enumerate(case.expected_source_ids)
+            ),
         )
 
     def generate(
@@ -458,7 +613,7 @@ class HermeticEvaluationExecutor:
         answer = (
             "I cannot answer from the available evidence."
             if case.should_abstain
-            else "; ".join(case.required_facts)
+            else "; ".join(fact.answer_variants[0] for fact in case.required_facts)
         )
         return GenerationObservation(
             answer,
@@ -509,13 +664,37 @@ def render_markdown(run: Mapping[str, Any]) -> str:
         "",
     ]
     lines.extend(f"- {key}: `{float(value):.4f}`" for key, value in quality.items())
+    ingestion = cast(Mapping[str, Any], run.get("ingestion", {}))
+    failed_ingestion = [
+        check for check in ingestion.get("checks", []) if not check.get("passed", False)
+    ]
+    lines.extend(["", "## Ingestion checks", ""])
+    if failed_ingestion:
+        for check in failed_ingestion:
+            references = ", ".join(check.get("chunk_references", [])) or "none"
+            lines.append(
+                f"- `{check['id']}` ({check['type']}): {check['reason']} "
+                f"— chunks `{references}`"
+            )
+    else:
+        lines.append("- All named chunk checks passed.")
     lines.extend(["", "## Cases", ""])
     for case in cast(list[dict[str, Any]], run.get("cases", [])):
         metrics = case["retrieval"]["metrics"]
-        lines.append(
-            f"- `{case['id']}`: Recall@5 `{metrics['recall_at_5']:.3f}`, "
-            f"MRR `{metrics['mrr']:.3f}`, stability `{case['generation']['stability']}`"
+        recall = metrics["recall_at_5"]
+        mrr = metrics["mrr"]
+        metric_text = (
+            "evidence metrics `n/a`"
+            if recall is None
+            else f"Recall@5 `{recall:.3f}`, MRR `{mrr:.3f}`"
         )
+        lines.append(
+            f"- `{case['id']}`: {metric_text}, stability "
+            f"`{case['generation']['stability']}`"
+        )
+        found = ", ".join(case["retrieval"].get("facts_found", [])) or "none"
+        missing = ", ".join(case["retrieval"].get("facts_missing", [])) or "none"
+        lines.append(f"  - Facts found: `{found}`; missing: `{missing}`")
         for number, repetition in enumerate(case["generation"]["repetitions"], 1):
             if repetition["status"] == "failed":
                 lines.append(

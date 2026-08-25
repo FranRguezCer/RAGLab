@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "profile": "core",
   "config": {
     "chunking": {
@@ -85,7 +85,16 @@
         "aster-manual"
       ],
       "required_facts": [
-        "raises `E17`"
+        {
+          "id": "low-flow-e17",
+          "evidence_anchors": [
+            "raises `E17`"
+          ],
+          "answer_variants": [
+            "raises E17",
+            "raises fault E17"
+          ]
+        }
       ],
       "should_abstain": false
     },
@@ -96,7 +105,15 @@
         "aster-manual"
       ],
       "required_facts": [
-        "SKIPPED_WET_BED"
+        {
+          "id": "wet-bed-skip-event",
+          "evidence_anchors": [
+            "SKIPPED_WET_BED"
+          ],
+          "answer_variants": [
+            "SKIPPED_WET_BED"
+          ]
+        }
       ],
       "should_abstain": false
     },
@@ -107,7 +124,17 @@
         "aster-manual"
       ],
       "required_facts": [
-        "it replaces device identities"
+        {
+          "id": "restore-replaced-configuration",
+          "evidence_anchors": [
+            "it replaces device identities"
+          ],
+          "answer_variants": [
+            "it replaces device identities",
+            "device identities, zone assignments, schedules, and rule settings",
+            "device identities, zone assignments, schedules, and automation rules"
+          ]
+        }
       ],
       "should_abstain": false
     },
@@ -118,7 +145,15 @@
         "aster-manual"
       ],
       "required_facts": [
-        "record fault `E41`"
+        {
+          "id": "isolation-record-e41",
+          "evidence_anchors": [
+            "record fault `E41`"
+          ],
+          "answer_variants": [
+            "record fault `E41`"
+          ]
+        }
       ],
       "should_abstain": false
     },
@@ -129,9 +164,33 @@
         "harbor-edge-cache"
       ],
       "required_facts": [
-        "tenant ID",
-        "normalized path",
-        "content language"
+        {
+          "id": "cache-key-tenant",
+          "evidence_anchors": [
+            "tenant ID"
+          ],
+          "answer_variants": [
+            "tenant ID"
+          ]
+        },
+        {
+          "id": "cache-key-path",
+          "evidence_anchors": [
+            "normalized path"
+          ],
+          "answer_variants": [
+            "normalized path"
+          ]
+        },
+        {
+          "id": "cache-key-language",
+          "evidence_anchors": [
+            "content language"
+          ],
+          "answer_variants": [
+            "content language"
+          ]
+        }
       ],
       "should_abstain": false
     },
@@ -142,8 +201,26 @@
         "orbit-telemetry"
       ],
       "required_facts": [
-        "histogram, not a gauge",
-        "p95 calculation"
+        {
+          "id": "request-duration-histogram",
+          "evidence_anchors": [
+            "histogram, not a gauge"
+          ],
+          "answer_variants": [
+            "histogram, not a gauge",
+            "use a histogram"
+          ]
+        },
+        {
+          "id": "release-latency-p95",
+          "evidence_anchors": [
+            "p95 calculation"
+          ],
+          "answer_variants": [
+            "p95 calculation",
+            "calculate p95"
+          ]
+        }
       ],
       "should_abstain": false
     },
@@ -154,7 +231,15 @@
         "meridian-incident-response"
       ],
       "required_facts": [
-        "alert, deployment ID, and UTC timestamp"
+        {
+          "id": "incident-initial-evidence",
+          "evidence_anchors": [
+            "alert, deployment ID, and UTC timestamp"
+          ],
+          "answer_variants": [
+            "alert, deployment ID, and UTC timestamp"
+          ]
+        }
       ],
       "should_abstain": false
     },
@@ -166,8 +251,25 @@
         "meridian-incident-response"
       ],
       "required_facts": [
-        "purge the affected release with its surrogate keys",
-        "released artifact"
+        {
+          "id": "rollback-release-invalidation",
+          "evidence_anchors": [
+            "purge the affected release with its surrogate keys"
+          ],
+          "answer_variants": [
+            "purge the affected release with its surrogate keys",
+            "invalidate the affected release using surrogate keys"
+          ]
+        },
+        {
+          "id": "incident-released-artifact",
+          "evidence_anchors": [
+            "released artifact"
+          ],
+          "answer_variants": [
+            "released artifact"
+          ]
+        }
       ],
       "should_abstain": false
     },
@@ -178,7 +280,15 @@
         "harbor-edge-cache"
       ],
       "required_facts": [
-        "must not include the Authorization header"
+        {
+          "id": "cache-key-excludes-authorization",
+          "evidence_anchors": [
+            "must not include the Authorization header"
+          ],
+          "answer_variants": [
+            "must not include the Authorization header"
+          ]
+        }
       ],
       "should_abstain": false
     },
@@ -196,7 +306,15 @@
         "harbor-edge-cache"
       ],
       "required_facts": [
-        "roll back immediately"
+        {
+          "id": "canary-immediate-rollback",
+          "evidence_anchors": [
+            "roll back immediately"
+          ],
+          "answer_variants": [
+            "roll back immediately"
+          ]
+        }
       ],
       "should_abstain": false,
       "history": [
@@ -211,8 +329,24 @@
         "orbit-telemetry"
       ],
       "required_facts": [
-        "user ID",
-        "raw request path"
+        {
+          "id": "metric-label-user-id",
+          "evidence_anchors": [
+            "user ID"
+          ],
+          "answer_variants": [
+            "user ID"
+          ]
+        },
+        {
+          "id": "metric-label-raw-path",
+          "evidence_anchors": [
+            "raw request path"
+          ],
+          "answer_variants": [
+            "raw request path"
+          ]
+        }
       ],
       "should_abstain": false,
       "history": [

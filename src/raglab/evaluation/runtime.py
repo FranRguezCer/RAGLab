@@ -24,6 +24,7 @@ from raglab.evaluation.models import (
     EvaluationJudge,
     EvaluationManifest,
     GenerationObservation,
+    IngestionCheckObservation,
     IngestionObservation,
     RetrievalObservation,
 )
@@ -132,25 +133,42 @@ class LiveEvaluationExecutor(EvaluationExecutor):
             raise EvaluationError(
                 f"Evaluation collection {collection!r} is empty; omit --reuse-index to build it"
             )
-        chunks_by_source: dict[str, list[str]] = {}
+        chunks_by_source: dict[str, list[tuple[str, str]]] = {}
         for uri, content, _tokens in rows:
             source_id = self._source_ids.get(uri)
             if source_id is not None:
-                chunks_by_source.setdefault(source_id, []).append(normalize(content))
-        separation = sum(
-            not any(
-                normalize(check.left_anchor) in chunk and normalize(check.right_anchor) in chunk
-                for chunk in chunks_by_source.get(check.source_id, [])
-            )
-            for check in manifest.must_separate
-        )
-        cohesion = sum(
-            any(
-                normalize(check.left_anchor) in chunk and normalize(check.right_anchor) in chunk
-                for chunk in chunks_by_source.get(check.source_id, [])
-            )
-            for check in manifest.must_keep
-        )
+                source_chunks = chunks_by_source.setdefault(source_id, [])
+                index = len(source_chunks)
+                source_chunks.append((f"{source_id}:{index}-{index}", normalize(content)))
+        checks: list[IngestionCheckObservation] = []
+        for check_type, expected_together, expected_checks in (
+            ("must_separate", False, manifest.must_separate),
+            ("must_keep", True, manifest.must_keep),
+        ):
+            for check in expected_checks:
+                implicated = tuple(
+                    reference
+                    for reference, chunk in chunks_by_source.get(check.source_id, [])
+                    if normalize(check.left_anchor) in chunk
+                    and normalize(check.right_anchor) in chunk
+                )
+                passed = bool(implicated) is expected_together
+                outcome = (
+                    "anchors appeared together"
+                    if implicated
+                    else "anchors did not appear together"
+                )
+                checks.append(
+                    IngestionCheckObservation(
+                        check.id,
+                        check_type,
+                        passed,
+                        f"{outcome}; {check.reason}",
+                        implicated,
+                    )
+                )
+        separation = sum(check.passed for check in checks if check.type == "must_separate")
+        cohesion = sum(check.passed for check in checks if check.type == "must_keep")
         return IngestionObservation(
             len({uri for uri, _content, _tokens in rows}),
             len(rows),
@@ -160,6 +178,7 @@ class LiveEvaluationExecutor(EvaluationExecutor):
             cohesion,
             len(manifest.must_keep),
             (time.perf_counter() - started) * 1000,
+            tuple(checks),
         )
 
     def retrieve(
@@ -190,11 +209,28 @@ class LiveEvaluationExecutor(EvaluationExecutor):
         )
         anchors = tuple(
             tuple(
-                fact
+                anchor
                 for fact in case.required_facts
-                if normalize(fact) in normalize(item.content)
+                for anchor in fact.evidence_anchors
+                if normalize(anchor) in normalize(item.content)
             )
             for item in response.results
+        )
+        fact_ids = tuple(
+            tuple(
+                fact.id
+                for fact in case.required_facts
+                if any(
+                    normalize(anchor) in normalize(item.content)
+                    for anchor in fact.evidence_anchors
+                )
+            )
+            for item in response.results
+        )
+        references = tuple(
+            f"{source_id}:{item.first_chunk_index}-{item.last_chunk_index}"
+            for item in response.results
+            if (source_id := self._source_ids.get(item.citation.source_uri)) is not None
         )
         aggregate_ids: tuple[str, ...] = ()
         if self._manifest is not None and self._manifest.profile == "live":
@@ -216,6 +252,8 @@ class LiveEvaluationExecutor(EvaluationExecutor):
             anchors,
             (time.perf_counter() - started) * 1000,
             aggregate_ids,
+            references,
+            fact_ids,
         )
 
     def generate(

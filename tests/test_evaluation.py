@@ -135,7 +135,7 @@ def test_application_runs_three_repetitions_and_persists_artifacts(tmp_path: Pat
     run = application.run(manifest)
 
     assert run["status"] == "complete"
-    assert run["schema_version"] == RUN_SCHEMA_VERSION == 2
+    assert run["schema_version"] == RUN_SCHEMA_VERSION == 3
     assert run["partial"] is False
     assert run["errors"]["hard"] == []
     assert all(case["generation"]["stability"] == "3/3" for case in run["cases"])
@@ -226,7 +226,8 @@ def test_failed_generation_checks_are_recorded_per_repetition(
 
     failed = run["cases"][0]["generation"]["repetitions"][0]
     assert failed["status"] == "failed"
-    assert failed["error"] == f"Generation checks failed: {failed_check}"
+    expected_check = "low-flow-e17" if failed_check == "required_facts" else failed_check
+    assert failed["error"] == f"Generation checks failed: {expected_check}"
     assert "raw_output" not in failed
     assert failed["prompt_tokens"] == 100
     assert failed["generated_tokens"] == 20
@@ -234,10 +235,10 @@ def test_failed_generation_checks_are_recorded_per_repetition(
     assert failed["latency_ms"] == 3.0
     assert run["summary"]["quality"]["generation_pass_rate"] == pytest.approx(35 / 36)
     assert run["errors"]["hard"] == [
-        f"aster-low-flow repetition 1: Generation checks failed: {failed_check}"
+        f"aster-low-flow repetition 1: Generation checks failed: {expected_check}"
     ]
     markdown = (tmp_path / f"{run['run_id']}.md").read_text()
-    assert f"Repetition 1 failed: Generation checks failed: {failed_check}" in markdown
+    assert f"Repetition 1 failed: Generation checks failed: {expected_check}" in markdown
 
 
 def test_operational_generation_error_still_aborts_the_run(tmp_path: Path) -> None:

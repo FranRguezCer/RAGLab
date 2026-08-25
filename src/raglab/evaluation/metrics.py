@@ -4,12 +4,21 @@ from __future__ import annotations
 
 import math
 import re
+import unicodedata
 from collections.abc import Sequence
 from statistics import median
 
 
 def normalize(value: str) -> str:
-    return re.sub(r"\s+", " ", value).strip().casefold()
+    """Normalize benchmark text without depending on Markdown or punctuation."""
+
+    normalized = unicodedata.normalize("NFKC", value).casefold()
+    without_markup = re.sub(r"[`*_~#\[\]()<>\\|]", " ", normalized)
+    without_punctuation = "".join(
+        " " if unicodedata.category(character).startswith("P") else character
+        for character in without_markup
+    )
+    return re.sub(r"\s+", " ", without_punctuation).strip()
 
 
 def retrieval_metrics(ranked: Sequence[str], relevant: Sequence[str]) -> dict[str, float]:
@@ -17,8 +26,16 @@ def retrieval_metrics(ranked: Sequence[str], relevant: Sequence[str]) -> dict[st
     if not expected:
         return {"hit_at_1": 1.0, "hit_at_3": 1.0, "hit_at_5": 1.0, "recall_at_5": 1.0,
                 "mrr": 1.0, "ndcg_at_5": 1.0}
-    ranks = [index + 1 for index, source in enumerate(ranked) if source in expected]
-    gains = [1.0 if source in expected else 0.0 for source in ranked[:5]]
+    seen: set[str] = set()
+    ranks: list[int] = []
+    gains: list[float] = []
+    for index, source in enumerate(ranked):
+        newly_relevant = source in expected and source not in seen
+        if newly_relevant:
+            ranks.append(index + 1)
+            seen.add(source)
+        if index < 5:
+            gains.append(float(newly_relevant))
     dcg = sum(gain / math.log2(index + 2) for index, gain in enumerate(gains))
     ideal = sum(1.0 / math.log2(index + 2) for index in range(min(5, len(expected))))
     return {
@@ -28,6 +45,34 @@ def retrieval_metrics(ranked: Sequence[str], relevant: Sequence[str]) -> dict[st
         "recall_at_5": len({source for source in ranked[:5] if source in expected}) / len(expected),
         "mrr": 1.0 / min(ranks) if ranks else 0.0,
         "ndcg_at_5": dcg / ideal if ideal else 0.0,
+    }
+
+
+def evidence_retrieval_metrics(
+    fact_ids_by_rank: Sequence[Sequence[str]], required_fact_ids: Sequence[str]
+) -> dict[str, float | None]:
+    """Measure ranked retrieval by distinct benchmark facts covered."""
+
+    expected = set(required_fact_ids)
+    if not expected:
+        return {
+            "hit_at_1": None,
+            "hit_at_3": None,
+            "hit_at_5": None,
+            "recall_at_5": None,
+            "mrr": None,
+        }
+    covered_by_rank = [set(facts) & expected for facts in fact_ids_by_rank]
+    first_rank = next(
+        (index + 1 for index, covered in enumerate(covered_by_rank) if covered), None
+    )
+    covered_at_5 = set().union(*covered_by_rank[:5]) if covered_by_rank else set()
+    return {
+        "hit_at_1": float(any(covered_by_rank[:1])),
+        "hit_at_3": float(any(covered_by_rank[:3])),
+        "hit_at_5": float(any(covered_by_rank[:5])),
+        "recall_at_5": len(covered_at_5) / len(expected),
+        "mrr": 1.0 / first_rank if first_rank is not None else 0.0,
     }
 
 

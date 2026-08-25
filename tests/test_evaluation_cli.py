@@ -20,7 +20,8 @@ def test_run_cli_uses_evaluation_application(
     assert main(["--artifact-dir", str(tmp_path), "run", "--profile", "core"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["status"] == "complete"
-    assert len(payload["cases"]) == 12
+    assert payload["error_count"] == 0
+    assert set(payload["artifacts"]) == {"json", "markdown"}
 
 
 def test_compare_and_promote_cli(
@@ -30,7 +31,7 @@ def test_compare_and_promote_cli(
         "raglab.evaluation.cli.LiveEvaluationExecutor",
         lambda **_kwargs: HermeticEvaluationExecutor(),
     )
-    assert main(["--artifact-dir", str(tmp_path), "run"]) == 0
+    assert main(["--artifact-dir", str(tmp_path), "run", "--full-json"]) == 0
     run = json.loads(capsys.readouterr().out)
     run["metadata"]["dirty"] = False
     run_path = tmp_path / "candidate.json"
@@ -60,7 +61,9 @@ def test_run_cli_prints_complete_report_and_exits_one_for_hard_failures(
         lambda **_kwargs: ContractFailingExecutor(),
     )
 
-    assert main(["--artifact-dir", str(tmp_path), "run", "--profile", "core"]) == 1
+    assert main(
+        ["--artifact-dir", str(tmp_path), "run", "--profile", "core", "--full-json"]
+    ) == 1
     payload = json.loads(capsys.readouterr().out)
     assert payload["status"] == "complete"
     assert len(payload["cases"]) == 12

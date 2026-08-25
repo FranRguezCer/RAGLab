@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "profile": "live",
   "config": {
     "chunking": {
@@ -38,32 +38,98 @@
     {
       "id": "attention-architecture",
       "query": "What architecture does the paper propose instead of recurrence and convolutions?",
-      "expected_source_ids": ["attention-paper"],
-      "required_facts": ["based solely on attention mechanisms"],
+      "expected_source_ids": [
+        "attention-paper"
+      ],
+      "required_facts": [
+        {
+          "id": "attention-architecture-fact-1",
+          "evidence_anchors": [
+            "based solely on attention mechanisms"
+          ],
+          "answer_variants": [
+            "based solely on attention mechanisms"
+          ]
+        }
+      ],
       "should_abstain": false,
       "domain": "research"
     },
     {
       "id": "rpi-computer-families",
       "query": "Which documentation topic covers Raspberry Pi Compute Module devices?",
-      "expected_source_ids": ["rpi-computers"],
-      "required_facts": ["Compute Module hardware"],
+      "expected_source_ids": [
+        "rpi-computers"
+      ],
+      "required_facts": [
+        {
+          "id": "rpi-computer-families-fact-1",
+          "evidence_anchors": [
+            "Compute Module hardware"
+          ],
+          "answer_variants": [
+            "Compute Module hardware"
+          ]
+        }
+      ],
       "should_abstain": false,
       "domain": "computers"
     },
     {
       "id": "rpi-usb-hub-power",
       "query": "How much power can the USB 3 Hub draw when bus-powered?",
-      "expected_source_ids": ["rpi-accessories"],
-      "required_facts": ["900 mA", "4.5 W"],
+      "expected_source_ids": [
+        "rpi-accessories"
+      ],
+      "required_facts": [
+        {
+          "id": "rpi-usb-hub-power-fact-1",
+          "evidence_anchors": [
+            "900 mA"
+          ],
+          "answer_variants": [
+            "900 mA"
+          ]
+        },
+        {
+          "id": "rpi-usb-hub-power-fact-2",
+          "evidence_anchors": [
+            "4.5 W"
+          ],
+          "answer_variants": [
+            "4.5 W"
+          ]
+        }
+      ],
       "should_abstain": false,
       "domain": "accessories"
     },
     {
       "id": "rpi-microcontroller-options",
       "query": "Which programming options are documented for Raspberry Pi microcontrollers?",
-      "expected_source_ids": ["rpi-microcontrollers"],
-      "required_facts": ["C or C++", "MicroPython"],
+      "expected_source_ids": [
+        "rpi-microcontrollers"
+      ],
+      "required_facts": [
+        {
+          "id": "rpi-microcontroller-options-fact-1",
+          "evidence_anchors": [
+            "C or C++"
+          ],
+          "answer_variants": [
+            "C or C++"
+          ]
+        },
+        {
+          "id": "rpi-microcontroller-options-fact-2",
+          "evidence_anchors": [
+            "MicroPython"
+          ],
+          "answer_variants": [
+            "MicroPython"
+          ]
+        }
+      ],
       "should_abstain": false,
       "domain": "microcontrollers"
     }
