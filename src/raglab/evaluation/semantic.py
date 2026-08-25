@@ -48,10 +48,10 @@ class TransformersNLIScorer:
         if self._model is not None:
             return
         try:
-            import torch  # type: ignore[import-not-found]
+            import torch
             from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
-            tokenizer = AutoTokenizer.from_pretrained(
+            tokenizer = cast(Any, AutoTokenizer).from_pretrained(
                 self.config.model.name,
                 revision=self.config.model.revision,
                 local_files_only=True,
