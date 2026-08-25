@@ -9,10 +9,11 @@ def test_rewriter_parses_fenced_json_and_limits_expansions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     rewriter = OllamaQueryRewriter()
+    bodies: list[dict[str, object]] = []
     monkeypatch.setattr(
         rewriter,
         "_request",
-        lambda _body: {
+        lambda body: bodies.append(body) or {
             "response": "```json\n"
             '{"standalone_query":"Fault E17 cause",'
             '"expansions":["E17 root cause","error E17","ignored"]}\n```'
@@ -23,6 +24,9 @@ def test_rewriter_parses_fenced_json_and_limits_expansions(
 
     assert result.standalone_query == "Fault E17 cause"
     assert result.expansions == ("E17 root cause", "error E17")
+    assert bodies[0]["think"] is False
+    assert bodies[0]["options"] == {"temperature": 0}
+    assert "Resolve every pronoun" in str(bodies[0]["prompt"])
 
 
 @pytest.mark.parametrize(

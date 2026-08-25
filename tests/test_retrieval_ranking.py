@@ -4,10 +4,15 @@ import pytest
 
 from raglab.contracts import Citation, ProvenanceStatus
 from raglab.retrieval import RetrievedChunk, maximal_marginal_relevance, reciprocal_rank_fusion
+from raglab.retrieval.ranking import FusedCandidate, direct_evidence_order, lexical_directness
 
 
 def _chunk(
-    identifier: str, *, ann: float | None = None, bm25: float | None = None
+    identifier: str,
+    *,
+    content: str | None = None,
+    ann: float | None = None,
+    bm25: float | None = None,
 ) -> RetrievedChunk:
     citation = Citation(
         source_uri="memory://doc",
@@ -24,7 +29,7 @@ def _chunk(
         chunk_id=identifier,
         document_id="document",
         chunk_index=int(identifier[-1]),
-        content=identifier,
+        content=content or identifier,
         token_count=1,
         heading_path=("Section",),
         embedding=(1.0, 0.0),
@@ -75,3 +80,35 @@ def test_mmr_prefers_a_relevant_but_diverse_result() -> None:
     )
 
     assert [identifier for identifier, _ in selected] == ["a", "c"]
+
+
+def test_lexical_directness_rewards_idf_coverage_and_ordered_bigrams() -> None:
+    scores = lexical_directness(
+        "Harbor cache key tenant path language",
+        [
+            "A Harbor cache key contains tenant path and language.",
+            "Language notes mention Harbor and tenant separately.",
+            "Unrelated greenhouse instructions.",
+        ],
+    )
+
+    assert scores[0] > scores[1] > scores[2]
+
+
+def test_direct_evidence_only_promotes_a_clear_bge_top_two_winner() -> None:
+    candidates = [
+        FusedCandidate(_chunk("c1", content="tenant path language cache key"), 1.0, 1, 1),
+        FusedCandidate(_chunk("c2", content="unrelated"), 0.9, 2, 2),
+        FusedCandidate(_chunk("c3", content="tenant"), 0.8, 3, 3),
+    ]
+
+    assert direct_evidence_order("tenant path language cache key", candidates, [1, 0, 2]) == [
+        0,
+        1,
+        2,
+    ]
+    assert direct_evidence_order("tenant path language cache key", candidates, [1, 2, 0]) == [
+        1,
+        2,
+        0,
+    ]

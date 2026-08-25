@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 
 from raglab.retrieval.models import RetrievedChunk
+
+_TOKEN = re.compile(r"[\w]+(?:[-'][\w]+)*", re.UNICODE)
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,6 +18,57 @@ class FusedCandidate:
     rrf_score: float
     ann_rank: int | None
     bm25_rank: int | None
+
+
+def lexical_directness(query: str, documents: Sequence[str]) -> list[float]:
+    """Score direct query evidence using corpus-IDF coverage and ordered bigrams."""
+    query_tokens = _tokens(query)
+    document_tokens = [_tokens(document) for document in documents]
+    if not query_tokens:
+        return [0.0] * len(documents)
+    unique_query = tuple(dict.fromkeys(query_tokens))
+    document_sets = [set(tokens) for tokens in document_tokens]
+    count = len(documents)
+    idf = {
+        token: math.log((count + 1) / (1 + sum(token in terms for terms in document_sets))) + 1
+        for token in unique_query
+    }
+    total_idf = sum(idf.values())
+    query_bigrams = tuple(zip(query_tokens, query_tokens[1:], strict=False))
+    scores: list[float] = []
+    for tokens, terms in zip(document_tokens, document_sets, strict=True):
+        coverage = sum(weight for token, weight in idf.items() if token in terms) / total_idf
+        if query_bigrams:
+            document_bigrams = set(zip(tokens, tokens[1:], strict=False))
+            bigrams = sum(pair in document_bigrams for pair in query_bigrams) / len(query_bigrams)
+        else:
+            bigrams = 0.0
+        scores.append(0.7 * coverage + 0.3 * bigrams)
+    return scores
+
+
+def direct_evidence_order(
+    query: str,
+    candidates: Sequence[FusedCandidate],
+    bge_order: Sequence[int],
+    *,
+    minimum_margin: float = 0.30,
+) -> list[int]:
+    """Promote one unambiguous direct hit while otherwise preserving BGE order."""
+    order = list(bge_order)
+    if len(order) < 2:
+        return order
+    scores = lexical_directness(query, [candidate.chunk.content for candidate in candidates])
+    lexical_order = sorted(range(len(scores)), key=lambda index: (-scores[index], index))
+    winner, second = lexical_order[:2]
+    if winner in order[:2] and scores[winner] - scores[second] >= minimum_margin:
+        order.remove(winner)
+        order.insert(0, winner)
+    return order
+
+
+def _tokens(value: str) -> tuple[str, ...]:
+    return tuple(match.group(0).casefold() for match in _TOKEN.finditer(value))
 
 
 def reciprocal_rank_fusion(

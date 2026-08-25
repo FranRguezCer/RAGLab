@@ -9,7 +9,6 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-
 _STAGES = ("rewrite", "embedding", "search", "fusion", "rerank", "expansion", "mmr")
 
 

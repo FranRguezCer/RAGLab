@@ -19,12 +19,13 @@ from raglab.retrieval.models import (
     RetrievalResult,
     RetrievedChunk,
 )
+from raglab.retrieval.profiling import RetrievalProfile
 from raglab.retrieval.ranking import (
     FusedCandidate,
+    direct_evidence_order,
     maximal_marginal_relevance,
     reciprocal_rank_fusion,
 )
-from raglab.retrieval.profiling import RetrievalProfile
 from raglab.retrieval.repository import RetrievalRepository
 from raglab.retrieval.reranking import BGEReranker
 
@@ -119,6 +120,8 @@ class RetrievalPipeline:
                 fused[index].chunk.chunk_id,
             ),
         )
+        if request.config.rerank:
+            order = direct_evidence_order(rewritten or request.query, fused, order)
         started = time.perf_counter()
         parents: dict[str, _Parent] = {}
         for index in order:
@@ -164,7 +167,10 @@ class RetrievalPipeline:
                 request.query, request.history, max_expansions=request.config.expansions
             )
         except Exception:
-            return [request.query], None, True
+            fallback = self._rewrite_fallback(request)
+            fallback_variants = list(dict.fromkeys((request.query, fallback)))
+            rewritten = fallback if fallback != request.query else None
+            return fallback_variants, rewritten, True
         standalone = rewrite.standalone_query.strip()
         candidates = [request.query, standalone, *rewrite.expansions[: request.config.expansions]]
         variants: list[str] = []
@@ -177,15 +183,28 @@ class RetrievalPipeline:
                 variants.append(normalized)
         return variants or [request.query], standalone if standalone else None, False
 
+    @staticmethod
+    def _rewrite_fallback(request: RetrievalRequest) -> str:
+        history = [item.strip() for item in request.history if item.strip()][-2:]
+        return " ".join((*history, request.query.strip()))
+
     def _rerank(
         self, request: RetrievalRequest, query: str, candidates: Sequence[FusedCandidate]
     ) -> list[float | None]:
         if not request.config.rerank or not candidates:
             return [None] * len(candidates)
-        scores = self.reranker.rerank(query, [candidate.chunk.content for candidate in candidates])
+        scores = self.reranker.rerank(
+            query, [self._reranker_text(candidate) for candidate in candidates]
+        )
         if len(scores) != len(candidates):
             raise ValueError("Reranker returned a different number of scores")
         return [float(score) for score in scores]
+
+    @staticmethod
+    def _reranker_text(candidate: FusedCandidate) -> str:
+        chunk = candidate.chunk
+        parts = [chunk.citation.title or "", " > ".join(chunk.heading_path), chunk.content]
+        return "\n".join(part for part in parts if part)
 
     def _expand(
         self, request: RetrievalRequest, candidate: FusedCandidate, reranker_score: float | None

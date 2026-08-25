@@ -35,6 +35,8 @@ class OllamaQueryRewriter:
                 "prompt": prompt,
                 "stream": False,
                 "format": "json",
+                "think": False,
+                "options": {"temperature": 0},
             }
         )
         raw = payload.get("response")
@@ -82,7 +84,9 @@ class OllamaQueryRewriter:
     def _prompt(query: str, history: Sequence[str], max_expansions: int) -> str:
         history_text = "\n".join(f"- {item}" for item in history) or "(none)"
         return (
-            "Rewrite the current retrieval query so it is self-contained. "
+            "Resolve every pronoun and implicit reference in the current question from the "
+            "conversation history, then rewrite it as a self-contained retrieval query. "
+            "Preserve identifiers, product names, error codes, and the user's exact intent. "
             f"Return JSON only with standalone_query and at most {max_expansions} expansions. "
             "Expansions should improve lexical or semantic recall without changing intent.\n\n"
             f"Conversation history:\n{history_text}\n\nCurrent query:\n{query}"

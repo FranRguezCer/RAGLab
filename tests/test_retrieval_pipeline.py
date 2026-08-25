@@ -135,17 +135,19 @@ def test_rewrite_preserves_original_deduplicates_and_uses_same_filters() -> None
     assert all(filters == (tenant,) for _, filters in repo.lexical_calls)
 
 
-def test_rewrite_failure_falls_back_to_original_query() -> None:
+def test_rewrite_failure_uses_last_two_nonempty_history_entries() -> None:
     repo = _Repository([])
     response = RetrievalPipeline(repo, _Embeddings(), rewriter=_BrokenRewriter()).retrieve(
         RetrievalRequest(
-            "original",
+            "What about its header?",
+            history=("ignored", " ", "Harbor authorization", "Cache bypass"),
             config=RetrievalConfig(rewrite=True, rerank=False, mmr=False),
         )
     )
 
-    assert response.query_variants == ("original",)
-    assert response.rewritten_query is None
+    fallback = "Harbor authorization Cache bypass What about its header?"
+    assert response.query_variants == ("What about its header?", fallback)
+    assert response.rewritten_query == fallback
 
 
 def test_history_enables_rewriting_without_explicit_flag() -> None:
@@ -171,6 +173,22 @@ def test_reranker_changes_order_and_trace() -> None:
     assert response.results[0].matched_chunk_ids == (second.chunk_id,)
     assert response.results[0].trace.reranker_score == 1.0
     assert response.results[0].trace.rrf_score > 0
+
+
+def test_reranker_receives_title_heading_and_content() -> None:
+    class CapturingReranker:
+        documents: list[str]
+
+        def rerank(self, query: str, documents: Sequence[str]) -> Sequence[float]:
+            self.documents = list(documents)
+            return [0.0] * len(documents)
+
+    reranker = CapturingReranker()
+    RetrievalPipeline(_Repository([_chunk(0)]), _Embeddings(), reranker=reranker).retrieve(
+        RetrievalRequest("fault", config=RetrievalConfig(mmr=False, small_to_big=False))
+    )
+
+    assert reranker.documents == ["Manual\nFaults\nchunk 0"]
 
 
 def test_small_to_big_stops_at_heading_filter_gap_and_budget() -> None:
