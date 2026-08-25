@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Sequence
 
 from raglab.contracts import Citation, ProvenanceStatus
@@ -234,3 +236,30 @@ def test_mmr_uses_best_child_embedding_and_diversifies_results() -> None:
 
     assert [result.document_id for result in response.results] == ["a", "c"]
     assert all(result.trace.mmr_score is not None for result in response.results)
+
+
+def test_opt_in_profile_records_hashed_query_and_stage_metrics(
+    tmp_path, monkeypatch,
+) -> None:
+    target = tmp_path / "profiles" / "retrieval.jsonl"
+    monkeypatch.setenv("RAGLAB_RETRIEVAL_PROFILE", str(target))
+    repo = _Repository([_chunk(0)])
+
+    RetrievalPipeline(repo, _Embeddings()).retrieve(
+        RetrievalRequest(
+            "private question",
+            config=RetrievalConfig(exact=True, rerank=False, mmr=False, small_to_big=False),
+        )
+    )
+
+    record = json.loads(target.read_text())
+    assert record["query_sha256"] == hashlib.sha256(b"private question").hexdigest()
+    assert "private question" not in target.read_text()
+    assert record["exact"] is True
+    assert record["candidate_count"] == 1
+    assert record["document_count"] == 1
+    assert record["postgres_calls"] == 2
+    assert record["rewrite_failures"] == 0
+    assert set(record["timings_ms"]) == {
+        "rewrite", "embedding", "search", "fusion", "rerank", "expansion", "mmr", "total"
+    }

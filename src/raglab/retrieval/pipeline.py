@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 
@@ -23,6 +24,7 @@ from raglab.retrieval.ranking import (
     maximal_marginal_relevance,
     reciprocal_rank_fusion,
 )
+from raglab.retrieval.profiling import RetrievalProfile
 from raglab.retrieval.repository import RetrievalRepository
 from raglab.retrieval.reranking import BGEReranker
 
@@ -60,10 +62,17 @@ class RetrievalPipeline:
 
     def retrieve(self, request: RetrievalRequest) -> RetrievalResponse:
         config = request.config
-        variants, rewritten = self._query_variants(request)
+        profile = RetrievalProfile(request.query, config.exact)
+        started = time.perf_counter()
+        variants, rewritten, rewrite_failed = self._query_variants(request)
+        profile.measure("rewrite", started)
+        profile.rewrite_failures = int(rewrite_failed)
+        started = time.perf_counter()
         vectors = self.embedding_provider.embed_documents(variants)
+        profile.measure("embedding", started)
         if len(vectors) != len(variants):
             raise ValueError("Embedding provider returned a different number of vectors")
+        started = time.perf_counter()
         semantic = [
             self.repository.semantic_search(
                 request.collection,
@@ -81,6 +90,9 @@ class RetrievalPipeline:
             )
             for variant in variants
         ]
+        profile.postgres_calls += len(semantic) + len(lexical)
+        profile.measure("search", started)
+        started = time.perf_counter()
         fused = reciprocal_rank_fusion(
             semantic,
             lexical,
@@ -88,7 +100,12 @@ class RetrievalPipeline:
             semantic_weight=config.semantic_weight,
             bm25_weight=config.bm25_weight,
         )
+        profile.candidate_count = len(fused)
+        profile.measure("fusion", started)
+        started = time.perf_counter()
         reranker_scores = self._rerank(request, rewritten or request.query, fused)
+        profile.measure("rerank", started)
+        profile.device = str(getattr(self.reranker, "device", "unknown"))
 
         def score(index: int) -> float:
             reranker_score = reranker_scores[index]
@@ -102,10 +119,13 @@ class RetrievalPipeline:
                 fused[index].chunk.chunk_id,
             ),
         )
+        started = time.perf_counter()
         parents: dict[str, _Parent] = {}
         for index in order:
             candidate = fused[index]
             parent = self._expand(request, candidate, reranker_scores[index])
+            if config.small_to_big:
+                profile.postgres_calls += 1
             previous = parents.get(parent.id)
             if previous is None:
                 parents[parent.id] = parent
@@ -117,26 +137,34 @@ class RetrievalPipeline:
                     ),
                 )
         ranked = list(parents.values())
+        profile.document_count = len({parent.document_id for parent in ranked})
+        profile.measure("expansion", started)
+        started = time.perf_counter()
         selected = self._select(ranked, request)
+        profile.measure("mmr", started)
         results = tuple(self._result(parent, mmr_score) for parent, mmr_score in selected)
-        return RetrievalResponse(
+        response = RetrievalResponse(
             query=request.query,
             rewritten_query=rewritten,
             query_variants=tuple(variants),
             filters=request.filters,
             results=results,
         )
+        profile.emit()
+        return response
 
-    def _query_variants(self, request: RetrievalRequest) -> tuple[list[str], str | None]:
+    def _query_variants(
+        self, request: RetrievalRequest
+    ) -> tuple[list[str], str | None, bool]:
         enabled = request.config.rewrite or bool(request.history)
         if not enabled or self.rewriter is None:
-            return [request.query], None
+            return [request.query], None, False
         try:
             rewrite = self.rewriter.rewrite(
                 request.query, request.history, max_expansions=request.config.expansions
             )
         except Exception:
-            return [request.query], None
+            return [request.query], None, True
         standalone = rewrite.standalone_query.strip()
         candidates = [request.query, standalone, *rewrite.expansions[: request.config.expansions]]
         variants: list[str] = []
@@ -147,7 +175,7 @@ class RetrievalPipeline:
             if normalized and key not in seen:
                 seen.add(key)
                 variants.append(normalized)
-        return variants or [request.query], standalone if standalone else None
+        return variants or [request.query], standalone if standalone else None, False
 
     def _rerank(
         self, request: RetrievalRequest, query: str, candidates: Sequence[FusedCandidate]
