@@ -124,11 +124,10 @@ class RetrievalPipeline:
             order = direct_evidence_order(rewritten or request.query, fused, order)
         started = time.perf_counter()
         parents: dict[str, _Parent] = {}
+        document_cache: dict[str, Sequence[NeighborChunk]] = {}
         for index in order:
             candidate = fused[index]
-            parent = self._expand(request, candidate, reranker_scores[index])
-            if config.small_to_big:
-                profile.postgres_calls += 1
+            parent = self._expand(request, candidate, reranker_scores[index], document_cache)
             previous = parents.get(parent.id)
             if previous is None:
                 parents[parent.id] = parent
@@ -140,6 +139,7 @@ class RetrievalPipeline:
                     ),
                 )
         ranked = list(parents.values())
+        profile.postgres_calls += len(document_cache)
         profile.document_count = len({parent.document_id for parent in ranked})
         profile.measure("expansion", started)
         started = time.perf_counter()
@@ -207,12 +207,20 @@ class RetrievalPipeline:
         return "\n".join(part for part in parts if part)
 
     def _expand(
-        self, request: RetrievalRequest, candidate: FusedCandidate, reranker_score: float | None
+        self,
+        request: RetrievalRequest,
+        candidate: FusedCandidate,
+        reranker_score: float | None,
+        document_cache: dict[str, Sequence[NeighborChunk]],
     ) -> _Parent:
         match = candidate.chunk
         if not request.config.small_to_big:
             return self._parent(candidate, [match], (match.chunk_id,), reranker_score)
-        rows = self.repository.document_chunks(match.document_id, request.filters)
+        if match.document_id not in document_cache:
+            document_cache[match.document_id] = self.repository.document_chunks(
+                match.document_id, request.filters
+            )
+        rows = document_cache[match.document_id]
         position = next(
             (index for index, row in enumerate(rows) if row.chunk.chunk_id == match.chunk_id), None
         )

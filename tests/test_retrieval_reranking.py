@@ -113,6 +113,7 @@ def test_reranker_uses_bounded_inference_batches_and_reuses_model(
     assert state["tokenizer_loads"] == ["test-model"]
     assert state["model_loads"] == ["test-model"]
     assert state["eval_calls"] == 1
+    assert reranker.device == "cpu"
 
 
 def test_reranker_does_not_load_model_for_empty_documents(
@@ -122,3 +123,80 @@ def test_reranker_does_not_load_model_for_empty_documents(
     monkeypatch.delitem(sys.modules, "transformers", raising=False)
 
     assert BGEReranker().rerank("query", []) == []
+
+
+def test_reranker_uses_cuda_fp32_then_retries_oom_on_cpu(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state: dict[str, Any] = {"device": None, "moves": [], "float_calls": 0, "empty_cache": 0}
+
+    class InferenceMode:
+        def __enter__(self) -> None:
+            return None
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    class Cuda:
+        class OutOfMemoryError(RuntimeError):
+            pass
+
+        @staticmethod
+        def is_available() -> bool:
+            return True
+
+        @staticmethod
+        def empty_cache() -> None:
+            state["empty_cache"] += 1
+
+    class Tokenizer:
+        def __call__(self, pairs: list[list[str]], **_kwargs: object) -> dict[str, object]:
+            return {"documents": [pair[1] for pair in pairs]}
+
+    class Model:
+        def float(self) -> Model:
+            state["float_calls"] += 1
+            return self
+
+        def to(self, device: str) -> Model:
+            state["device"] = device
+            state["moves"].append(device)
+            return self
+
+        def eval(self) -> None:
+            return None
+
+        def __call__(self, *, documents: list[str]) -> SimpleNamespace:
+            if state["device"] == "cuda":
+                raise Cuda.OutOfMemoryError("CUDA out of memory")
+            return SimpleNamespace(logits=_Tensor([float(len(item)) for item in documents]))
+
+    class AutoTokenizer:
+        from_pretrained = staticmethod(lambda _model: Tokenizer())
+
+    class AutoModelForSequenceClassification:
+        from_pretrained = staticmethod(lambda _model: Model())
+
+    torch = ModuleType("torch")
+    torch.cuda = Cuda  # type: ignore[attr-defined]
+    torch.inference_mode = lambda: InferenceMode()  # type: ignore[attr-defined]
+    transformers = ModuleType("transformers")
+    transformers.AutoTokenizer = AutoTokenizer  # type: ignore[attr-defined]
+    transformers.AutoModelForSequenceClassification = (  # type: ignore[attr-defined]
+        AutoModelForSequenceClassification
+    )
+    monkeypatch.setitem(sys.modules, "torch", torch)
+    monkeypatch.setitem(sys.modules, "transformers", transformers)
+
+    reranker = BGEReranker(device="auto")
+
+    assert reranker.rerank("query", ["one", "three"]) == [3.0, 5.0]
+    assert state["moves"] == ["cuda", "cpu"]
+    assert state["float_calls"] == 2
+    assert state["empty_cache"] == 1
+    assert reranker.device == "cpu"
+
+
+def test_reranker_rejects_invalid_device() -> None:
+    with pytest.raises(ValueError, match="auto, cuda, or cpu"):
+        BGEReranker(device="tpu")

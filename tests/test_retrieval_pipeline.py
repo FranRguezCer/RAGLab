@@ -64,6 +64,7 @@ class _Repository:
         self.semantic_calls: list[tuple[str, tuple[MetadataFilter, ...]]] = []
         self.lexical_calls: list[tuple[str, tuple[MetadataFilter, ...]]] = []
         self.neighbors: dict[str, list[NeighborChunk]] = {}
+        self.document_calls: list[str] = []
 
     def semantic_search(
         self,
@@ -92,6 +93,7 @@ class _Repository:
     def document_chunks(
         self, document_id: str, filters: Sequence[MetadataFilter]
     ) -> list[NeighborChunk]:
+        self.document_calls.append(document_id)
         return self.neighbors.get(document_id, [])
 
 
@@ -236,6 +238,17 @@ def test_empty_heading_uses_centered_window_across_neighbor_headings() -> None:
     )
 
     assert result.id == "doc:0-2"
+
+
+def test_small_to_big_fetches_each_document_once_per_retrieval() -> None:
+    repo = _Repository([_chunk(0), _chunk(1)])
+    repo.neighbors["doc"] = [NeighborChunk(_chunk(0), True), NeighborChunk(_chunk(1), True)]
+
+    RetrievalPipeline(repo, _Embeddings()).retrieve(
+        RetrievalRequest("fault", config=RetrievalConfig(rerank=False, mmr=False))
+    )
+
+    assert repo.document_calls == ["doc"]
 
 
 def test_mmr_uses_best_child_embedding_and_diversifies_results() -> None:
