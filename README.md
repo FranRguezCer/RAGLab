@@ -213,9 +213,12 @@ parsing, embedding, and storage failures remain hard failures.
 ### AST, structure, and semantic boundaries
 
 The Markdown parser builds an AST so headings, paragraphs, lists, tables, and code blocks remain
-recognizable. These structural units are the first chunk candidates. Headings and token budgets
-decide hard boundaries. When a unit is too large, temporary embeddings compare neighbouring
-material; a large semantic change becomes evidence for a split. These temporary vectors are
+recognizable. These structural units are the first chunk candidates. Maximum-size, heading, and
+semantic cuts are hard boundaries, even when either side is smaller than `min_tokens`. Target-size
+cuts are flexible: a small trailing group may merge backward only within the same heading and
+without exceeding `max_tokens`. This makes `min_tokens` a preferred size rather than permission to
+mix unrelated evidence. Temporary embeddings compare neighbouring material; a positive distance
+at or above the configured percentile becomes a semantic boundary. These temporary vectors are
 discarded.
 
 The chunker preserves faithful `content`. It builds separate `embedding_text` from the title,
@@ -269,8 +272,8 @@ fail before ingestion.
 | `--collection` | Interactive prompt; required without a TTY | Existing search boundary or the name of a new collection. |
 | `--dsn` | `RAGLAB_DSN`, else `postgresql://raglab:raglab@127.0.0.1:5432/raglab` | PostgreSQL connection string. |
 | `--target-tokens` | Stored value; new collection: `512` | Preferred size. Larger chunks add context but reduce precision. |
-| `--min-tokens` | Stored value; new collection: `120` | Minimum preferred size. Raising it reduces fragments but can merge ideas. |
-| `--max-tokens` | Stored value; new collection: `768` | Upper chunk target. Raising it increases context and embedding cost. |
+| `--min-tokens` | Stored value; new collection: `120` | Preferred minimum. It may merge a small target-size tail, but never across heading, semantic, or maximum-size boundaries. |
+| `--max-tokens` | Stored value; new collection: `768` | Hard upper bound. Raising it increases context and embedding cost. |
 | `--semantic-percentile` | Stored value; new collection: `90` | Lower values split more often; higher values require stronger evidence. |
 | internal overlap | `0` | Fixed default; avoids duplicated evidence. |
 | `--use-jina` | Disabled | Sends a public URL to Jina Reader; never automatic and rejects local/private targets. |

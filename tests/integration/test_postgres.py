@@ -97,3 +97,29 @@ def test_migration_idempotency_view_and_search() -> None:
     with pytest.raises(StorageError):
         repository.store(config, changed, [EmbeddedChunk(invalid, vector)], "new-fingerprint")
     assert repository.search(config.name, vector, exact=True)[0].content == "hello"
+
+    replacement_chunks = [
+        EmbeddedChunk(Chunk(0, "changed one", "changed one", 2, (), 1, 1), vector),
+        EmbeddedChunk(Chunk(1, "changed two", "changed two", 2, (), 2, 2), vector),
+    ]
+    replacement = repository.store(config, changed, replacement_chunks, "new-fingerprint")
+
+    assert replacement == (first[0], False)
+    assert repository.current_document_id(
+        config, source_uri, changed.content_hash, "new-fingerprint"
+    ) == first[0]
+    assert repository.current_document_id(
+        config, source_uri, document.content_hash, "fingerprint"
+    ) is None
+    assert repository.evaluation_chunks(config.name) == [
+        (source_uri, "changed one", 2),
+        (source_uri, "changed two", 2),
+    ]
+    assert repository.collection_stats(config.name) == {
+        "name": config.name,
+        "model": config.model,
+        "dimension": 1024,
+        "document_count": 1,
+        "chunk_count": 2,
+        "token_count": 4,
+    }

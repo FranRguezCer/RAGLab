@@ -4,10 +4,13 @@ import math
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from typing import Protocol
 
 from raglab.contracts import BlockKind, Chunk, MarkdownBlock, ParsedMarkdown
+
+_MIN_HEADING_DISTANCE_SAMPLES = 3
 
 
 class TokenCounter(Protocol):
@@ -75,6 +78,19 @@ class _Unit:
     end_line: int | None
 
 
+class _Boundary(StrEnum):
+    MAX = "max"
+    HEADING = "heading"
+    SEMANTIC = "semantic"
+    TARGET = "target"
+
+
+@dataclass(frozen=True, slots=True)
+class _Group:
+    units: tuple[_Unit, ...]
+    boundary: _Boundary | None
+
+
 def cosine_distance(left: Sequence[float], right: Sequence[float]) -> float:
     if len(left) != len(right) or not left:
         raise ValueError("Vectors must be non-empty and have equal dimensions")
@@ -122,19 +138,33 @@ class SemanticChunker:
             if self.embeddings is not None
             else math.inf
         )
+        heading_thresholds = self._heading_thresholds(units, distances)
         self.last_distances = tuple(distances)
         self.last_threshold = threshold
-        groups: list[list[_Unit]] = []
+        groups: list[_Group] = []
         current: list[_Unit] = []
+        boundary: _Boundary | None = None
         for index, unit in enumerate(units):
-            if current and self._must_break(current, unit, distances, index, threshold):
-                groups.append(current)
+            next_boundary = self._boundary(
+                current,
+                unit,
+                distances,
+                index,
+                threshold,
+                heading_thresholds,
+            )
+            if current and next_boundary is not None:
+                groups.append(_Group(tuple(current), boundary))
                 current = []
+                boundary = next_boundary
             current.append(unit)
         if current:
-            groups.append(current)
+            groups.append(_Group(tuple(current), boundary))
         groups = self._merge_small(groups)
-        return [self._to_chunk(index, group, document.title) for index, group in enumerate(groups)]
+        return [
+            self._to_chunk(index, group.units, document.title)
+            for index, group in enumerate(groups)
+        ]
 
     def _split_block(self, block: MarkdownBlock) -> list[_Unit]:
         if block.kind is BlockKind.HEADING:
@@ -232,35 +262,58 @@ class SemanticChunker:
             raise ValueError("Embedding provider returned a different number of vectors")
         return [cosine_distance(vectors[i], vectors[i + 1]) for i in range(len(vectors) - 1)]
 
-    def _must_break(
+    def _heading_thresholds(
+        self, units: Sequence[_Unit], distances: Sequence[float]
+    ) -> dict[tuple[str, ...], float]:
+        by_heading: dict[tuple[str, ...], list[float]] = {}
+        for index, distance in enumerate(distances):
+            heading_path = units[index].heading_path
+            if heading_path == units[index + 1].heading_path:
+                by_heading.setdefault(heading_path, []).append(distance)
+        return {
+            heading_path: _percentile(values, self.config.semantic_percentile)
+            for heading_path, values in by_heading.items()
+            if len(values) >= _MIN_HEADING_DISTANCE_SAMPLES
+        }
+
+    def _boundary(
         self,
         current: Sequence[_Unit],
         unit: _Unit,
         distances: Sequence[float],
         index: int,
         threshold: float,
-    ) -> bool:
+        heading_thresholds: dict[tuple[str, ...], float],
+    ) -> _Boundary | None:
+        if not current:
+            return None
         candidate = "\n\n".join([item.text for item in current] + [unit.text])
         if self.tokens.count(candidate) > self.config.max_tokens:
-            return True
+            return _Boundary.MAX
         current_tokens = self.tokens.count("\n\n".join(item.text for item in current))
-        heading_changed = current[-1].heading_path != unit.heading_path
-        semantic_break = index > 0 and distances[index - 1] >= threshold
-        return current_tokens >= self.config.min_tokens and (
-            heading_changed or current_tokens >= self.config.target_tokens or semantic_break
-        )
+        if current[-1].heading_path != unit.heading_path:
+            return _Boundary.HEADING
+        distance = distances[index - 1] if index > 0 else 0.0
+        effective_threshold = min(threshold, heading_thresholds.get(unit.heading_path, threshold))
+        if distance > 0 and distance >= effective_threshold:
+            return _Boundary.SEMANTIC
+        if current_tokens >= self.config.target_tokens:
+            return _Boundary.TARGET
+        return None
 
-    def _merge_small(self, groups: list[list[_Unit]]) -> list[list[_Unit]]:
+    def _merge_small(self, groups: list[_Group]) -> list[_Group]:
         if len(groups) < 2:
             return groups
-        merged: list[list[_Unit]] = []
+        merged: list[_Group] = []
         for group in groups:
-            size = self.tokens.count("\n\n".join(unit.text for unit in group))
-            if merged and size < self.config.min_tokens:
-                candidate = merged[-1] + group
+            size = self.tokens.count("\n\n".join(unit.text for unit in group.units))
+            if merged and group.boundary is _Boundary.TARGET and size < self.config.min_tokens:
+                previous = merged[-1]
+                same_heading = previous.units[-1].heading_path == group.units[0].heading_path
+                candidate = previous.units + group.units
                 text = "\n\n".join(unit.text for unit in candidate)
-                if self.tokens.count(text) <= self.config.max_tokens:
-                    merged[-1] = candidate
+                if same_heading and self.tokens.count(text) <= self.config.max_tokens:
+                    merged[-1] = _Group(candidate, previous.boundary)
                     continue
             merged.append(group)
         return merged

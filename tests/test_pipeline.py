@@ -3,6 +3,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import replace
 
+import pytest
+
+import raglab.pipeline as pipeline_module
 from raglab import CollectionConfig, LineProvenance, ProvenanceStatus, SourceInput
 from raglab.chunking import ChunkingConfig, SemanticChunker
 from raglab.conversion import Converter
@@ -57,6 +60,53 @@ def test_pipeline_embeds_before_storage_and_reports_idempotency() -> None:
     assert repository.calls[0][1].title == "Title"
     assert first.provenance_status is ProvenanceStatus.COMPLETE
     assert first.provenance_warnings == ()
+
+
+def test_pipeline_v4_replaces_a_v3_source_without_duplication(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ReplacingRepository:
+        def __init__(self) -> None:
+            self.records: dict[str, str] = {}
+
+        def current_document_id(
+            self,
+            config: CollectionConfig,
+            source_uri: str,
+            content_hash: str,
+            fingerprint: str,
+        ) -> str | None:
+            return "document-id" if self.records.get(source_uri) == fingerprint else None
+
+        def store(self, config, document, chunks, fingerprint):
+            self.records[document.source_uri] = fingerprint
+            return "document-id", False
+
+    repository = ReplacingRepository()
+    embeddings = FakeEmbeddings()
+    pipeline = IngestionPipeline(
+        converter=Converter(),
+        parser=MarkdownParser(),
+        chunker=SemanticChunker(
+            embedding_provider=embeddings,
+            config=ChunkingConfig(target_tokens=8, min_tokens=2, max_tokens=20),
+        ),
+        embeddings=embeddings,
+        repository=repository,
+    )
+    source = SourceInput.text("# Title\n\nUseful content.")
+    collection = CollectionConfig("test", dimension=2)
+    converted = Converter().convert(source)
+    monkeypatch.setattr(pipeline_module, "PIPELINE_FINGERPRINT_VERSION", 3)
+    legacy_fingerprint = pipeline._fingerprint(converted, collection)
+    repository.records[converted.source_uri] = legacy_fingerprint
+    monkeypatch.setattr(pipeline_module, "PIPELINE_FINGERPRINT_VERSION", 4)
+
+    report = pipeline.ingest(source, collection)
+
+    assert report.status == "indexed"
+    assert report.fingerprint != legacy_fingerprint
+    assert repository.records == {converted.source_uri: report.fingerprint}
 
 
 def test_pipeline_reports_and_persists_degraded_provenance() -> None:

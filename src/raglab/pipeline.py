@@ -19,6 +19,8 @@ from raglab.embeddings import OllamaEmbeddingProvider
 from raglab.parsing import MarkdownParser
 from raglab.storage import PostgresRepository
 
+PIPELINE_FINGERPRINT_VERSION = 4
+
 
 class Embeddings(Protocol):
     def embed_documents(self, texts: Sequence[str]) -> list[list[float]]: ...
@@ -125,7 +127,7 @@ class IngestionPipeline:
             ),
         )
         payload = {
-            "pipeline": 3,
+            "pipeline": PIPELINE_FINGERPRINT_VERSION,
             "converter": [document.converter, document.converter_version],
             "citable_source": {
                 "source_name": document.source_name,

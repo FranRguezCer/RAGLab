@@ -20,6 +20,21 @@ class TopicEmbeddings:
         return [[1.0, 0.0] if "alpha" in text else [0.0, 1.0] for text in texts]
 
 
+class FlatEmbeddings:
+    def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
+        return [[1.0, 0.0] for _ in texts]
+
+
+class ScriptedDistanceChunker(SemanticChunker):
+    def __init__(self, distances: Sequence[float], *, config: ChunkingConfig) -> None:
+        super().__init__(embedding_provider=FlatEmbeddings(), config=config)
+        self.scripted_distances = list(distances)
+
+    def _distances(self, units: Sequence[object]) -> list[float]:
+        assert len(self.scripted_distances) == len(units) - 1
+        return self.scripted_distances
+
+
 def fake_tokenizer_modules(
     *, snapshot_download: Mock, from_pretrained: Mock
 ) -> dict[str, ModuleType]:
@@ -107,6 +122,129 @@ def test_structural_mode_does_not_create_synthetic_semantic_boundaries() -> None
 
     assert len(chunks) == 1
     assert chunker.last_threshold == float("inf")
+
+
+def test_heading_change_is_a_hard_boundary_below_minimum() -> None:
+    chunker = SemanticChunker(
+        token_counter=SimpleTokenCounter(),
+        config=ChunkingConfig(target_tokens=8, min_tokens=4, max_tokens=20),
+    )
+
+    chunks = chunker.chunk(
+        parsed(block("first topic", ("First",)), block("second topic", ("Second",)))
+    )
+
+    assert [chunk.content for chunk in chunks] == ["first topic", "second topic"]
+    assert [chunk.heading_path for chunk in chunks] == [("First",), ("Second",)]
+
+
+def test_semantic_change_is_a_hard_boundary_below_minimum() -> None:
+    chunker = SemanticChunker(
+        token_counter=SimpleTokenCounter(),
+        embedding_provider=TopicEmbeddings(),
+        config=ChunkingConfig(target_tokens=8, min_tokens=4, max_tokens=20),
+    )
+
+    chunks = chunker.chunk(parsed(block("alpha topic"), block("beta topic")))
+
+    assert [chunk.content for chunk in chunks] == ["alpha topic", "beta topic"]
+
+
+def test_identical_embeddings_do_not_create_zero_distance_boundaries() -> None:
+    chunker = SemanticChunker(
+        token_counter=SimpleTokenCounter(),
+        embedding_provider=FlatEmbeddings(),
+        config=ChunkingConfig(target_tokens=20, min_tokens=2, max_tokens=30),
+    )
+
+    chunks = chunker.chunk(parsed(block("first paragraph"), block("second paragraph")))
+
+    assert [chunk.content for chunk in chunks] == ["first paragraph\n\nsecond paragraph"]
+    assert chunker.last_threshold == 0.0
+
+
+def test_heading_local_threshold_exposes_a_shift_hidden_by_global_percentile() -> None:
+    chunker = ScriptedDistanceChunker(
+        [0.9, 0.9, 0.1, 0.6, 0.2],
+        config=ChunkingConfig(
+            target_tokens=20,
+            min_tokens=2,
+            max_tokens=50,
+            semantic_percentile=80,
+        ),
+    )
+
+    chunks = chunker.chunk(
+        parsed(
+            block("noise one", ("Noise",)),
+            block("noise two", ("Noise",)),
+            block("local one", ("Local",)),
+            block("local two", ("Local",)),
+            block("local shift", ("Local",)),
+            block("local after", ("Local",)),
+        )
+    )
+
+    assert chunker.last_threshold == 0.9
+    assert [chunk.content for chunk in chunks if chunk.heading_path == ("Local",)] == [
+        "local one\n\nlocal two",
+        "local shift\n\nlocal after",
+    ]
+
+
+def test_heading_local_threshold_falls_back_to_global_for_small_samples() -> None:
+    chunker = ScriptedDistanceChunker(
+        [0.9, 0.9, 0.1, 0.6, 0.9],
+        config=ChunkingConfig(
+            target_tokens=20,
+            min_tokens=2,
+            max_tokens=50,
+            semantic_percentile=80,
+        ),
+    )
+
+    chunks = chunker.chunk(
+        parsed(
+            block("noise one", ("Noise",)),
+            block("noise two", ("Noise",)),
+            block("small one", ("Small",)),
+            block("small two", ("Small",)),
+            block("small shift", ("Small",)),
+            block("tail", ("Tail",)),
+        )
+    )
+
+    assert chunker.last_threshold == 0.9
+    assert [chunk.content for chunk in chunks if chunk.heading_path == ("Small",)] == [
+        "small one\n\nsmall two\n\nsmall shift"
+    ]
+
+
+def test_small_group_after_target_boundary_merges_within_heading_and_maximum() -> None:
+    chunker = SemanticChunker(
+        token_counter=SimpleTokenCounter(),
+        config=ChunkingConfig(target_tokens=4, min_tokens=3, max_tokens=10),
+    )
+
+    chunks = chunker.chunk(parsed(block("one two three four"), block("five")))
+
+    assert [chunk.content for chunk in chunks] == ["one two three four\n\nfive"]
+    assert chunks[0].token_count <= 10
+
+
+def test_maximum_boundary_does_not_merge_a_small_group() -> None:
+    chunker = SemanticChunker(
+        token_counter=SimpleTokenCounter(),
+        config=ChunkingConfig(target_tokens=5, min_tokens=5, max_tokens=6),
+    )
+
+    chunks = chunker.chunk(parsed(block("one two three four"), block("five six seven eight")))
+
+    assert [chunk.content for chunk in chunks] == [
+        "one two three four",
+        "five six seven eight",
+    ]
+    assert all(chunk.token_count <= 6 for chunk in chunks)
 
 
 def test_large_table_repeats_header_and_respects_maximum() -> None:
