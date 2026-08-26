@@ -24,6 +24,11 @@ raglab-evaluate = "raglab.evaluation.cli:entrypoint"
 conversion = ["docling>=2,<3", "easyocr>=1.7,<2"]
 tokenizers = ["transformers>=4.51,<5"]
 retrieval = ["transformers>=4.51,<5", "torch>=2.5,<3"]
+evaluation = [
+  "huggingface-hub>=0.30,<1",
+  "torch>=2.5,<3",
+  "transformers>=4.51,<5",
+]
 dev = [
   "mypy>=1.15,<2",
   "nbclient>=0.10,<1",

@@ -481,21 +481,21 @@ replace the system policy merely by containing instruction-like prose.
 | Contract | Enforced behavior |
 | -------- | ----------------- |
 | Evidence | The model may use only complete `RetrievalResult.content` values. |
-| Structured source IDs | The model returns ordered `source_ids` aliases such as `S1` and `S2`. |
+| Structured source IDs | RAGLab derives ordered `source_ids` aliases such as `S1` and `S2` from source-scoped extracted facts. |
 | Resolved sources | `sources` contains the retrieval identity and citation metadata for those IDs in the same order. |
-| Known sources | Every ID must refer to a result from this retrieval call. |
-| Non-abstaining answer | At least one unique, valid `source_ids` entry is required. |
-| Insufficient evidence | The model must set `abstained: true` with an empty `source_ids`; an empty retrieval abstains without calling the LLM. |
+| Known sources | Each extracted fact inherits the ID of the source analyzed in that call. |
+| Non-abstaining answer | At least one validated fact is required before final synthesis. |
+| Insufficient evidence | Empty retrieval abstains without calling the LLM; retrieval with no extracted facts abstains after source analysis. |
 
-The model generates `answer`, `abstained`, and `source_ids` under a JSON Schema whose enum contains
-only the aliases from the current retrieval. Missing, unknown, duplicate, or invalid IDs fail
-closed with `GenerationError`; an abstention carrying IDs is invalid too. Legacy `[S#]` markers
-are removed from `answer` and never decide attribution. Validation proves traceability; it does
-not claim that an LLM can independently prove the semantic truth of every sentence.
+For non-empty retrieval, the model first returns a bounded `facts` array independently for every
+source. RAGLab attaches each validated fact to that source, then asks the model only for the final
+`answer`. The public `source_ids` tuple is derived from the retained fact lineage; the model never
+declares attribution in the synthesis response. Legacy `[S#]` markers are removed from `answer`
+and never decide attribution. Validation proves traceability; it does not claim that an LLM can
+independently prove the semantic truth of every sentence.
 
-`source_ids` is the compact, authoritative declaration made by the model. `sources` is built by
-RAGLab from that validated tuple and preserves each result's retrieval ID, document ID, and full
-citation metadata. Consumers can inspect the simple aliases without losing provenance.
+`sources` is built from the derived tuple and preserves each result's retrieval ID, document ID,
+and full citation metadata. Consumers can inspect compact aliases without losing provenance.
 
 ```bash
 raglab-generate "What causes fault E17, and how should it be resolved?" \
@@ -518,11 +518,11 @@ The response is JSON by default and contains:
     }
   ],
   "retrieval": {"query": "...", "results": []},
-  "strategy": "single_pass",
+  "strategy": "hierarchical",
   "source_shortfall": false,
   "minimum_sources": 5,
   "source_count": 5,
-  "metrics": {"model_calls": 1, "estimated_prompt_tokens": 1800}
+  "metrics": {"model_calls": 6, "estimated_prompt_tokens": 1800}
 }
 ```
 
@@ -543,30 +543,20 @@ flowchart TD
     QUERY["One question"] --> RETRIEVE["Typed RetrievalPipeline"]
     RETRIEVE --> CHECK["Validate collection model + dimension"]
     CHECK --> SOURCES["Stable S1..Sn over complete results"]
-    SOURCES --> FIT{"System prompt + all sources + output reserve fit num_ctx?"}
-    FIT -->|Yes| SINGLE["Single-pass structured synthesis"]
-    FIT -->|No| BATCH["Sequential complete-source batches"]
-    BATCH --> FACTS["Validate source-linked facts per batch"]
+    SOURCES --> ANALYZE["Analyze each complete source independently"]
+    ANALYZE --> FACTS["Validate source-linked facts"]
     FACTS --> SYNTH["Final structured synthesis"]
-    SINGLE --> GUARD["Validate JSON and source IDs"]
-    SYNTH --> GUARD
-    GUARD --> JSON["Answer + source_ids + sources + original retrieval"]
+    SYNTH --> GUARD["Validate answer JSON"]
+    GUARD --> DERIVE["Derive source IDs from fact lineage"]
+    DERIVE --> JSON["Answer + source_ids + sources + original retrieval"]
 ```
 
-`single_pass` is the shortest path. Its conservative planner budgets the separate system policy,
-user prompt, JSON Schema, Qwen `/no_think` control when applicable, output reserve, and a template
-margin—not just source bytes. If the complete invocation would exceed `num_ctx`, `hierarchical`
-groups complete candidates into sequential extraction calls, validates that every fact refers
-only to its batch IDs, and synthesizes from those source-linked facts. Source IDs stay stable end
-to end.
-
-If an extraction exhausts `num_predict`, the fallback recursively splits that batch and retries;
-it never silently accepts a partial response. If the first fact layer still cannot fit final
-synthesis, bounded reduction rounds compress source-linked fact groups and recheck the complete
-invocation budget at every level. Lack of progress, a single oversized source/fact, or final
-synthesis exhaustion fails explicitly. The planner does **not** truncate evidence to force it
-through. A length-limited single-pass attempt enters the same hierarchical path, and the failed
-attempt remains visible in call/token metrics.
+`single_pass` is reserved for the no-evidence abstention, which makes no model call. Every
+non-empty retrieval follows the hierarchical path: one complete-source extraction call per
+result, then final synthesis from validated facts. If those facts cannot fit, bounded reduction
+rounds compress source-linked groups while preserving the full source-ID lineage. Lack of
+progress, one oversized source or fact, extraction exhaustion, and final synthesis exhaustion
+all fail explicitly. The planner does **not** truncate evidence to force it through.
 
 ## Validated 8 GB local profile
 
@@ -729,8 +719,9 @@ pipeline.
 
 The core manifest uses schema v3. Each required fact has a stable ID, one or more
 `evidence_anchors` for retrieval, deterministic `answer_variants` for lexical grading, and one
-canonical `semantic_claim`. Lexical matching remains first; only a parseable, non-abstaining
-answer that misses a fact lexically is eligible for bounded semantic rescue. The independent,
+canonical `semantic_claim`. Lexical matching remains the first positive check, while every
+parseable, non-abstaining answer is eligible for bounded semantic grading: NLI can rescue lexical
+misses or veto lexical hits that confidently contradict the claim. The independent,
 revision-pinned DeBERTa NLI model runs on CPU in batches of at most eight and rejects pairs over
 512 tokens rather than truncating them. The
 manifest also fixes semantic percentile `85`, four Aster questions and chunk controls, three short
@@ -756,7 +747,7 @@ their recorded hashes are part of the evidence.
 | -------- | ----------------- |
 | Ingestion | Named must-separate and must-keep checks, separate cohesion/separation rates, document/chunk counts, token distribution, latency |
 | Retrieval | Evidence Hit@1/3/5, Recall@5 and MRR; source metrics and bounded nDCG@5 as diagnostics; exact-versus-HNSW agreement; latency |
-| Generation | Contract, lexical/semantic/final facts by ID, abstention, and citation checks; rescue and unresolved rates; fail-closed pass rate; stability across 3 runs; tokens, calls, latency |
+| Generation | Contract, lexical/semantic/final facts by ID, abstention, and citation checks; rescue, unresolved, and contradiction-veto diagnostics; fail-closed pass rate; stability across 3 runs; tokens, calls, latency |
 | Operation | Hard and advisory errors plus p50/p95 retrieval and generation latency |
 
 The quality metrics answer different questions:
@@ -780,10 +771,10 @@ stable chunk reference such as `aster-manual:3-4`. Approximate-versus-exact agre
 references rather than ephemeral database UUIDs.
 
 Ground truth names evidence with versioned `source_id` values and normalized text anchors, never
-ephemeral PostgreSQL UUIDs. Run schema v4 fingerprints the complete benchmark definition:
+ephemeral PostgreSQL UUIDs. Run schema v5 fingerprints the complete benchmark definition:
 profile, cases, questions, history, abstention rules, expected sources, fact expectations, chunk
 checks, and configuration. Comparison and promotion require the same definition fingerprint;
-v3 run artifacts are intentionally incompatible. Latency is shown only when hardware
+v4 run artifacts are intentionally incompatible. Latency is shown only when hardware
 fingerprints match.
 
 Hard failures cover objective contract breaches such as missing expected evidence or failed
@@ -807,14 +798,23 @@ raglab-evaluate run --profile core --judge-model <different-model>
 
 RAGLab does not install or pin a second judge model in this version.
 
-Semantic rescue is disabled until calibration succeeds against the locked 96-pair fixture and a
-separate 32-pair holdout. Calibration selects the smallest zero-false-promotion threshold and
-disables rescue when the threshold is impossible, the holdout has a false promotion, or the
-pinned local model is unavailable:
+Semantic grading uses the pinned local-only Tasksource document-NLI checkpoint. The locked v2
+fixture mirrors production routing with 128 calibration rows and an immutable 112-row holdout.
+Calibration derives independent entailment and contradiction thresholds from calibration only.
+Activation requires zero false promotions and vetoes, all lexical contradictions vetoed, at least
+80% semantic-rescue recall in both splits, and the frozen 18-answer regression to produce exactly
+12 rescues and six rejections. Lexical hits remain valid unless high-confidence contradiction
+vetoes them; every unscorable NLI pair fails closed:
 
 ```bash
+python -m pip install -e '.[evaluation]'
+hf download tasksource/deberta-small-long-nli \
+  --revision 9a77395d4d3751be9e2a69c4ae318491d9b3fffb
 raglab-evaluate calibrate-semantic --profile core
 ```
+
+The download is an explicit setup step. Evaluation itself uses the pinned revision from the local
+Hugging Face cache with network access disabled and fails closed when that snapshot is missing.
 
 ## Baseline rules and CLI reference
 
@@ -833,9 +833,9 @@ cat "${RUN_JSON%.json}.md"
 raglab-evaluate baseline promote "$RUN_JSON"
 ```
 
-Evaluation run artifacts use schema v4. Packaged manifests use schema v3; external schema-v1 and
-v2 manifests remain readable as lexical-only definitions. Existing v3 run artifacts remain
-available for manual inspection but cannot be compared or promoted. The first v4 baseline must be
+Evaluation run artifacts use schema v5. Packaged manifests use schema v3; external schema-v1 and
+v2 manifests remain readable as lexical-only definitions. Existing v4 run artifacts remain
+available for manual inspection but cannot be compared or promoted. The first v5 baseline must be
 generated, reviewed, and promoted explicitly.
 
 The following comparison is **illustrative only**, not a measured RAGLab result:
@@ -850,6 +850,10 @@ The following comparison is **illustrative only**, not a measured RAGLab result:
 
 That candidate is `mixed`: retrieval improved while generation regressed. The evaluator implements
 that verdict today, but only artifacts produced by an actual run are evidence about this project.
+Verdicts use only separation, cohesion, Recall@5, MRR, generation pass, contract, final-fact,
+abstention, and citation rates, where higher is always better. Lexical, semantic-rescue,
+unresolved, and contradiction-veto rates remain descriptive diagnostics with deltas and never
+decide promotion.
 
 | Command | Meaning |
 | ------- | ------- |
