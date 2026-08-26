@@ -9,24 +9,31 @@ from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from importlib.resources import files
 from pathlib import Path
-from typing import Any, Protocol, cast
+from typing import Any, cast
 
 from raglab.errors import EvaluationError
 from raglab.evaluation.models import EvaluationManifest, SemanticConfig
-
-SEMANTIC_MODEL = "tasksource/deberta-small-long-nli"
-SEMANTIC_REVISION = "9a77395d4d3751be9e2a69c4ae318491d9b3fffb"
-SEMANTIC_SNAPSHOT_FILES = (
-    "added_tokens.json",
-    "config.json",
-    "model.safetensors",
-    "special_tokens_map.json",
-    "spm.model",
-    "tokenizer.json",
-    "tokenizer_config.json",
+from raglab.nli import (
+    MAX_BATCH_SIZE as _MAX_BATCH_SIZE,
 )
-MAX_BATCH_SIZE = 8
-MAX_TOKENS = 512
+from raglab.nli import (
+    MAX_TOKENS as _MAX_TOKENS,
+)
+from raglab.nli import (
+    NLI_MODEL,
+    NLI_REVISION,
+    NLI_SNAPSHOT_FILES,
+    NLIScorer,
+    NLIScores,
+    PinnedNLIError,
+    PinnedTransformersNLIScorer,
+)
+
+SEMANTIC_MODEL = NLI_MODEL
+SEMANTIC_REVISION = NLI_REVISION
+SEMANTIC_SNAPSHOT_FILES = NLI_SNAPSHOT_FILES
+MAX_BATCH_SIZE = _MAX_BATCH_SIZE
+MAX_TOKENS = _MAX_TOKENS
 CALIBRATION_PAIRS = 128
 HOLDOUT_PAIRS = 112
 CALIBRATION_RESCUE_PAIRS = 48
@@ -34,108 +41,26 @@ HOLDOUT_RESCUE_PAIRS = 32
 LEXICAL_CONTRADICTIONS_PER_SPLIT = 16
 
 
-@dataclass(frozen=True, slots=True)
-class NLIScores:
-    entailment: float
-    contradiction: float
+SemanticScorer = NLIScorer
 
 
-class SemanticScorer(Protocol):
-    def score(self, pairs: Sequence[tuple[str, str]]) -> list[NLIScores | None]: ...
-
-
-class TransformersNLIScorer:
+class TransformersNLIScorer(PinnedTransformersNLIScorer):
     def __init__(self, config: SemanticConfig) -> None:
-        m = config.model
-        if (
-            m.name != SEMANTIC_MODEL
-            or m.revision != SEMANTIC_REVISION
-            or m.device != "cpu"
-            or not 1 <= m.batch_size <= MAX_BATCH_SIZE
-            or m.max_tokens != MAX_TOKENS
-        ):
-            raise EvaluationError("Semantic scoring requires the pinned CPU NLI configuration")
         self.config = config
-        self._tokenizer: Any = None
-        self._model: Any = None
-        self._torch: Any = None
-        self._entailment_index: int | None = None
-        self._contradiction_index: int | None = None
+        try:
+            super().__init__(config.model)
+        except PinnedNLIError as exc:
+            raise EvaluationError(
+                "Semantic scoring requires the pinned CPU NLI configuration"
+            ) from exc
 
     def _load(self) -> None:
-        if self._model is not None:
-            return
         try:
-            import torch
-            from huggingface_hub import snapshot_download
-            from transformers import AutoModelForSequenceClassification, AutoTokenizer
-
-            snapshot = snapshot_download(
-                repo_id=self.config.model.name,
-                revision=self.config.model.revision,
-                local_files_only=True,
-                allow_patterns=list(SEMANTIC_SNAPSHOT_FILES),
-            )
-            tokenizer = cast(Any, AutoTokenizer).from_pretrained(snapshot, local_files_only=True)
-            model = AutoModelForSequenceClassification.from_pretrained(
-                snapshot, local_files_only=True, use_safetensors=True
-            ).to("cpu")
-        except (ImportError, OSError, RuntimeError, ValueError) as exc:
+            super()._load()
+        except PinnedNLIError as exc:
             raise EvaluationError(
                 "Pinned semantic NLI model is unavailable locally; semantic grading is disabled"
             ) from exc
-        labels = {
-            str(v).casefold(): int(k)
-            for k, v in cast(dict[Any, Any], model.config.id2label).items()
-        }
-        entailment = next((v for k, v in labels.items() if "entail" in k), None)
-        contradiction = next((v for k, v in labels.items() if "contrad" in k), None)
-        if entailment is None or contradiction is None or entailment == contradiction:
-            raise EvaluationError(
-                "Pinned semantic NLI model needs distinct entailment and contradiction labels"
-            )
-        model.eval()
-        self._torch = torch
-        self._tokenizer = tokenizer
-        self._model = model
-        self._entailment_index = entailment
-        self._contradiction_index = contradiction
-
-    def score(self, pairs: Sequence[tuple[str, str]]) -> list[NLIScores | None]:
-        self._load()
-        assert self._tokenizer is not None and self._model is not None and self._torch is not None
-        assert self._entailment_index is not None and self._contradiction_index is not None
-        results: list[NLIScores | None] = [None] * len(pairs)
-        eligible = []
-        for i, (premise, hypothesis) in enumerate(pairs):
-            if (
-                len(self._tokenizer(premise, hypothesis, truncation=False)["input_ids"])
-                <= self.config.model.max_tokens
-            ):
-                eligible.append((i, premise, hypothesis))
-        for offset in range(0, len(eligible), self.config.model.batch_size):
-            batch = eligible[offset : offset + self.config.model.batch_size]
-            encoded = self._tokenizer(
-                [x[1] for x in batch],
-                [x[2] for x in batch],
-                padding=True,
-                truncation=False,
-                return_tensors="pt",
-            )
-            if int(encoded["input_ids"].shape[1]) > self.config.model.max_tokens:
-                continue
-            with self._torch.inference_mode():
-                probabilities = self._torch.softmax(
-                    self._model(**{k: v.to("cpu") for k, v in encoded.items()}).logits, dim=-1
-                )
-            for row, e, c in zip(
-                batch,
-                probabilities[:, self._entailment_index].tolist(),
-                probabilities[:, self._contradiction_index].tolist(),
-                strict=True,
-            ):
-                results[row[0]] = NLIScores(float(e), float(c))
-        return results
 
 
 def semantic_fingerprint(config: SemanticConfig) -> str:
