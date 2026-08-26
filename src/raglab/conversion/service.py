@@ -114,9 +114,11 @@ def _media_type_for_path(path: Path) -> str | None:
 
 
 def _read_url(url: str, timeout: float) -> _DownloadedResource:
+    _validate_public_http_url(url)
     request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
+    opener = urllib.request.build_opener(_PublicOnlyRedirectHandler())
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+        with opener.open(request, timeout=timeout) as response:  # noqa: S310
             headers = response.headers
             media_type = headers.get_content_type() if headers.get("Content-Type") else None
             return _DownloadedResource(
@@ -129,7 +131,7 @@ def _read_url(url: str, timeout: float) -> _DownloadedResource:
         raise ConversionError(f"Could not download {url}: {exc}") from exc
 
 
-def _is_public_http_url(url: str) -> bool:
+def _validate_public_http_url(url: str) -> None:
     parsed = urlparse(url)
     if (
         parsed.scheme not in {"http", "https"}
@@ -137,14 +139,48 @@ def _is_public_http_url(url: str) -> bool:
         or parsed.username is not None
         or parsed.password is not None
     ):
-        return False
+        raise UnsafeRemoteURLError(
+            "Remote URL must be HTTP(S), include a host, and contain no credentials"
+        )
     try:
-        addresses = {item[4][0] for item in socket.getaddrinfo(parsed.hostname, parsed.port)}
-    except socket.gaierror:
-        return False
+        port = parsed.port
+        addresses = {
+            item[4][0]
+            for item in socket.getaddrinfo(
+                parsed.hostname,
+                port,
+                type=socket.SOCK_STREAM,
+            )
+        }
+    except (socket.gaierror, UnicodeError, ValueError) as exc:
+        raise UnsafeRemoteURLError(
+            "Remote URL host could not be resolved safely"
+        ) from exc
     if not addresses:
-        return False
-    return all(ipaddress.ip_address(address).is_global for address in addresses)
+        raise UnsafeRemoteURLError("Remote URL host resolved to no addresses")
+    try:
+        resolved = [ipaddress.ip_address(address) for address in addresses]
+        public_only = all(address.is_global and not address.is_multicast for address in resolved)
+    except ValueError as exc:
+        raise UnsafeRemoteURLError("Remote URL host resolved to an invalid address") from exc
+    if not public_only:
+        raise UnsafeRemoteURLError(
+            "Remote URL host must resolve exclusively to public IP addresses"
+        )
+
+
+class _PublicOnlyRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        _validate_public_http_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 def _docling_title(document: Any) -> str | None:
@@ -457,10 +493,7 @@ class Converter:
             raise UnsafeRemoteURLError("Jina Reader accepts public URLs only, never local files")
         if not source.allow_remote_service:
             raise UnsafeRemoteURLError("Set allow_remote_service=True to opt in to Jina Reader")
-        if not _is_public_http_url(source.uri):
-            raise UnsafeRemoteURLError(
-                "Jina Reader target must resolve only to public IP addresses"
-            )
+        _validate_public_http_url(source.uri)
         endpoint = f"https://r.jina.ai/{quote(source.uri, safe=':/?&=%#')}"
         downloaded = _read_url(endpoint, self.timeout)
         text = _nonempty(downloaded.payload.decode("utf-8"), source.uri)

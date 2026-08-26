@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import socket
+import urllib.request
 from pathlib import Path
 from unittest.mock import patch
 
@@ -7,7 +9,11 @@ import pytest
 
 from raglab.contracts import LineProvenance, ProvenanceStatus, SourceInput
 from raglab.conversion import Converter
-from raglab.conversion.service import _DownloadedResource
+from raglab.conversion.service import (
+    _DownloadedResource,
+    _PublicOnlyRedirectHandler,
+    _validate_public_http_url,
+)
 from raglab.errors import EmptySourceError, UnsafeRemoteURLError
 
 
@@ -63,6 +69,105 @@ def test_jina_rejects_urls_with_credentials(url: str) -> None:
         Converter().convert(
             SourceInput.url(url, allow_remote_service=True),
             use_jina=True,
+        )
+
+
+def address_info(*addresses: str) -> list[tuple[int, int, int, str, tuple[str, int]]]:
+    return [
+        (
+            socket.AF_INET6 if ":" in address else socket.AF_INET,
+            socket.SOCK_STREAM,
+            6,
+            "",
+            (address, 0),
+        )
+        for address in addresses
+    ]
+
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        "127.0.0.1",
+        "10.0.0.1",
+        "169.254.1.1",
+        "192.0.2.1",
+        "224.0.0.1",
+        "::1",
+        "fc00::1",
+        "fe80::1",
+    ],
+)
+def test_local_url_conversion_rejects_non_public_targets(address: str) -> None:
+    with (
+        patch(
+            "raglab.conversion.service.socket.getaddrinfo",
+            return_value=address_info(address),
+        ),
+        pytest.raises(UnsafeRemoteURLError),
+    ):
+        Converter().convert(SourceInput.url("https://internal.example/document.md"))
+
+
+def test_public_url_validation_accepts_exclusively_public_dns() -> None:
+    with patch(
+        "raglab.conversion.service.socket.getaddrinfo",
+        return_value=address_info("93.184.216.34", "2606:2800:220:1:248:1893:25c8:1946"),
+    ):
+        _validate_public_http_url("https://example.org/document.md")
+
+
+def test_url_validation_rejects_mixed_public_and_private_dns() -> None:
+    with (
+        patch(
+            "raglab.conversion.service.socket.getaddrinfo",
+            return_value=address_info("93.184.216.34", "10.0.0.1"),
+        ),
+        pytest.raises(UnsafeRemoteURLError),
+    ):
+        _validate_public_http_url("https://example.org/document.md")
+
+
+def test_url_validation_rejects_dns_failure() -> None:
+    with (
+        patch(
+            "raglab.conversion.service.socket.getaddrinfo",
+            side_effect=socket.gaierror("unresolved"),
+        ),
+        pytest.raises(UnsafeRemoteURLError),
+    ):
+        _validate_public_http_url("https://missing.example/document.md")
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "ftp://example.org/document.md",
+        "https://user@example.org/document.md",
+        "https://:secret@example.org/document.md",
+    ],
+)
+def test_local_url_validation_rejects_unsupported_or_credentialed_urls(url: str) -> None:
+    with pytest.raises(UnsafeRemoteURLError):
+        _validate_public_http_url(url)
+
+
+def test_redirect_handler_rejects_public_to_private_redirect_before_request() -> None:
+    request = urllib.request.Request("https://public.example/start")
+    with (
+        patch(
+            "raglab.conversion.service.socket.getaddrinfo",
+            return_value=address_info("10.0.0.1"),
+        ),
+        pytest.raises(UnsafeRemoteURLError),
+    ):
+        _PublicOnlyRedirectHandler().redirect_request(
+            request,
+            None,
+            302,
+            "Found",
+            {},
+            "http://private.example/admin",
         )
 
 
