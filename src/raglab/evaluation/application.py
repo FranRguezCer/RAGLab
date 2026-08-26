@@ -49,6 +49,18 @@ from raglab.evaluation.semantic import (
 
 MetadataProvider = Callable[[], dict[str, Any]]
 
+AUTHORITATIVE_QUALITY_AXES = (
+    "ingestion_separation_rate",
+    "ingestion_cohesion_rate",
+    "retrieval_recall_at_5",
+    "retrieval_mrr",
+    "generation_pass_rate",
+    "generation_contract_rate",
+    "generation_facts_final_rate",
+    "generation_abstention_rate",
+    "generation_citations_rate",
+)
+
 
 class EvaluationApplication:
     """Own evaluation execution, comparison, persistence, and baseline promotion."""
@@ -164,6 +176,8 @@ class EvaluationApplication:
         self._validate_comparison(candidate_run, baseline_run)
         candidate_axes = _quality_axes(candidate_run)
         baseline_axes = _quality_axes(baseline_run)
+        candidate_diagnostics = _quality_diagnostics(candidate_run)
+        baseline_diagnostics = _quality_diagnostics(baseline_run)
         hardware_compatible = candidate_run["metadata"].get("hardware_fingerprint") == baseline_run[
             "metadata"
         ].get("hardware_fingerprint")
@@ -179,6 +193,14 @@ class EvaluationApplication:
                     "delta": candidate_axes[key] - baseline_axes[key],
                 }
                 for key in baseline_axes
+            },
+            "diagnostics": {
+                key: {
+                    "baseline": baseline_diagnostics[key],
+                    "candidate": candidate_diagnostics[key],
+                    "delta": candidate_diagnostics[key] - baseline_diagnostics[key],
+                }
+                for key in baseline_diagnostics
             },
             "verdict": conservative_verdict(baseline_axes, candidate_axes),
         }
@@ -867,7 +889,19 @@ def _load_run(value: str | Path | Mapping[str, Any]) -> dict[str, Any]:
 
 def _quality_axes(run: Mapping[str, Any]) -> dict[str, float]:
     quality = cast(Mapping[str, Any], cast(Mapping[str, Any], run["summary"])["quality"])
-    return {str(key): float(value) for key, value in quality.items()}
+    try:
+        return {key: float(quality[key]) for key in AUTHORITATIVE_QUALITY_AXES}
+    except KeyError as exc:
+        raise EvaluationError(f"Evaluation run is missing quality axis {exc.args[0]!r}") from exc
+
+
+def _quality_diagnostics(run: Mapping[str, Any]) -> dict[str, float]:
+    quality = cast(Mapping[str, Any], cast(Mapping[str, Any], run["summary"])["quality"])
+    return {
+        str(key): float(value)
+        for key, value in quality.items()
+        if key not in AUTHORITATIVE_QUALITY_AXES
+    }
 
 
 def _grade_rate(grades: list[dict[str, Any]], field: str) -> float:

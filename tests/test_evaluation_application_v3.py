@@ -127,6 +127,34 @@ def test_compare_rejects_ineligible_or_incompatible_v3_runs(
         EvaluationApplication(HermeticEvaluationExecutor()).compare(candidate, baseline)
 
 
+def test_compare_keeps_semantic_rates_diagnostic_only(tmp_path: Path) -> None:
+    baseline = _run(tmp_path)
+    candidate = copy.deepcopy(baseline)
+    candidate["run_id"] = "candidate"
+    baseline_quality = baseline["summary"]["quality"]
+    candidate_quality = candidate["summary"]["quality"]
+    baseline_quality["retrieval_recall_at_5"] = 0.5
+    candidate_quality["retrieval_recall_at_5"] = 0.6
+    baseline_quality["generation_facts_lexical_rate"] = 0.9
+    candidate_quality["generation_facts_lexical_rate"] = 0.8
+    baseline_quality["generation_semantic_rescue_rate"] = 0.3
+    candidate_quality["generation_semantic_rescue_rate"] = 0.2
+    baseline_quality["generation_semantic_unresolved_rate"] = 0.1
+    candidate_quality["generation_semantic_unresolved_rate"] = 0.2
+    baseline_quality["generation_semantic_contradiction_veto_rate"] = 0.1
+    candidate_quality["generation_semantic_contradiction_veto_rate"] = 0.2
+
+    comparison = EvaluationApplication(HermeticEvaluationExecutor()).compare(candidate, baseline)
+
+    assert comparison["verdict"] == "improved"
+    assert "generation_semantic_unresolved_rate" not in comparison["axes"]
+    unresolved = comparison["diagnostics"]["generation_semantic_unresolved_rate"]
+    assert unresolved["delta"] == pytest.approx(0.1)
+    assert comparison["diagnostics"]["generation_semantic_contradiction_veto_rate"][
+        "delta"
+    ] == pytest.approx(0.1)
+
+
 def test_promotion_rejects_legacy_v3_run(tmp_path: Path) -> None:
     run = _run(tmp_path)
     run["schema_version"] = 3
