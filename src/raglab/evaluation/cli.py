@@ -25,9 +25,7 @@ def _parser() -> argparse.ArgumentParser:
         prog="raglab-evaluate",
         description="Run, compare, and explicitly promote reproducible RAG evaluations.",
     )
-    parser.add_argument(
-        "--artifact-dir", type=Path, default=Path("artifacts/evaluation")
-    )
+    parser.add_argument("--artifact-dir", type=Path, default=Path("artifacts/evaluation"))
     subcommands = parser.add_subparsers(dest="command", required=True)
 
     run = subcommands.add_parser("run", help="Build an evaluation candidate")
@@ -41,9 +39,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     run.add_argument("--judge-model")
     run.add_argument("--dsn", default=os.environ.get("RAGLAB_DSN", DEFAULT_DSN))
-    run.add_argument(
-        "--model", default=os.environ.get("RAGLAB_GENERATION_MODEL", "qwen3:4b")
-    )
+    run.add_argument("--model", default=os.environ.get("RAGLAB_GENERATION_MODEL", "qwen3:4b"))
     run.add_argument(
         "--embedding-model",
         default=os.environ.get("RAGLAB_EMBEDDING_MODEL", "qwen3-embedding:0.6b"),
@@ -100,12 +96,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             if manifest.semantic is None:
                 raise ValueError("manifest has no semantic configuration")
             calibration = calibrate(
-                manifest.semantic, TransformersNLIScorer(manifest.semantic)
+                manifest.semantic, TransformersNLIScorer(manifest.semantic), manifest
             )
             result = {
                 **asdict(calibration),
                 "profile": args.profile,
-                "authority": "semantic_fact_rescue_only",
+                "authority": "semantic_fact_rescue_and_contradiction_veto",
             }
         else:
             application = EvaluationApplication(
@@ -116,9 +112,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 baseline = args.baseline or args.artifact_dir / "baseline.json"
                 result = application.compare(args.candidate, baseline)
             else:
-                destination = application.promote(
-                    args.run, destination=args.destination
-                )
+                destination = application.promote(args.run, destination=args.destination)
                 result = {"baseline": str(destination)}
     except (RagLabError, RuntimeError, ValueError, OSError) as exc:
         parser.exit(1, f"raglab-evaluate: error: {exc}\n")

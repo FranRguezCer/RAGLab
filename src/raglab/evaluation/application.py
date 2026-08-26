@@ -40,6 +40,7 @@ from raglab.evaluation.models import (
     SemanticConfig,
 )
 from raglab.evaluation.semantic import (
+    NLIScores,
     SemanticScorer,
     TransformersNLIScorer,
     render_pair,
@@ -102,7 +103,13 @@ class EvaluationApplication:
             cases = [self._run_case(case, collection, errors) for case in manifest.cases]
         except Exception as exc:
             failed = self._base_run(
-                run_id, manifest, reuse_index, metadata, corpus_hash, source_hashes, config_hash,
+                run_id,
+                manifest,
+                reuse_index,
+                metadata,
+                corpus_hash,
+                source_hashes,
+                config_hash,
                 benchmark_hash,
             )
             failed.update(
@@ -118,7 +125,13 @@ class EvaluationApplication:
 
         summary = self._summary(ingestion, cases)
         run = self._base_run(
-            run_id, manifest, reuse_index, metadata, corpus_hash, source_hashes, config_hash,
+            run_id,
+            manifest,
+            reuse_index,
+            metadata,
+            corpus_hash,
+            source_hashes,
+            config_hash,
             benchmark_hash,
         )
         run.update(
@@ -151,10 +164,9 @@ class EvaluationApplication:
         self._validate_comparison(candidate_run, baseline_run)
         candidate_axes = _quality_axes(candidate_run)
         baseline_axes = _quality_axes(baseline_run)
-        hardware_compatible = (
-            candidate_run["metadata"].get("hardware_fingerprint")
-            == baseline_run["metadata"].get("hardware_fingerprint")
-        )
+        hardware_compatible = candidate_run["metadata"].get("hardware_fingerprint") == baseline_run[
+            "metadata"
+        ].get("hardware_fingerprint")
         result: dict[str, Any] = {
             "baseline_run_id": baseline_run["run_id"],
             "candidate_run_id": candidate_run["run_id"],
@@ -224,10 +236,7 @@ class EvaluationApplication:
             set(approximate.stable_references[:5]) & set(exact.stable_references[:5])
         ) / max(1, len(set(exact.stable_references[:5])))
         aggregate_agreement = (
-            len(
-                set(approximate.source_ids[:5])
-                & set(approximate.aggregate_source_ids[:5])
-            )
+            len(set(approximate.source_ids[:5]) & set(approximate.aggregate_source_ids[:5]))
             / max(1, len(set(approximate.aggregate_source_ids[:5])))
             if approximate.aggregate_source_ids
             else None
@@ -260,9 +269,7 @@ class EvaluationApplication:
                 repetitions.append(attempt)
                 checks.append(self._contract_failure_checks(case, exc))
                 fact_grading.append(self._contract_fact_grading(case, exc))
-                errors["hard"].append(
-                    f"{case.id} repetition {repetition_number}: {exc}"
-                )
+                errors["hard"].append(f"{case.id} repetition {repetition_number}: {exc}")
                 continue
             repetition_checks, repetition_grading = self._generation_checks(
                 case, observation, errors
@@ -272,12 +279,8 @@ class EvaluationApplication:
             failed_checks = [name for name, passed in repetition_checks.items() if passed is False]
             if failed_checks:
                 reason = "Generation checks failed: " + ", ".join(failed_checks)
-                repetitions.append(
-                    {"status": "failed", **asdict(observation), "error": reason}
-                )
-                errors["hard"].append(
-                    f"{case.id} repetition {repetition_number}: {reason}"
-                )
+                repetitions.append({"status": "failed", **asdict(observation), "error": reason})
+                errors["hard"].append(f"{case.id} repetition {repetition_number}: {reason}")
             else:
                 repetitions.append({"status": "passed", **asdict(observation)})
         valid_repetitions = sum(all(value is True for value in check.values()) for check in checks)
@@ -340,18 +343,18 @@ class EvaluationApplication:
             any(normalize(variant) in answer for variant in fact.answer_variants)
             for fact in case.required_facts
         ]
-        semantic_scores: list[float | None] = [None] * len(case.required_facts)
+        semantic_scores: list[NLIScores | None] = [None] * len(case.required_facts)
         semantic = self._semantic_config
         eligible = [
             index
-            for index, passed in enumerate(lexical)
-            if not passed
-            and not case.should_abstain
+            for index, _passed in enumerate(lexical)
+            if not case.should_abstain
             and not observation.abstained
             and case.required_facts[index].semantic_claim is not None
             and semantic is not None
             and semantic.enabled
             and semantic.calibration.threshold is not None
+            and semantic.calibration.contradiction_threshold is not None
         ]
         if eligible:
             assert semantic is not None
@@ -372,24 +375,43 @@ class EvaluationApplication:
                 if len(scores) != len(eligible):
                     raise EvaluationError("Semantic scorer returned an invalid score count")
                 for index, score in zip(eligible, scores, strict=True):
-                    if score is not None and math.isfinite(score) and 0.0 <= score <= 1.0:
+                    if (
+                        score is not None
+                        and math.isfinite(score.entailment)
+                        and math.isfinite(score.contradiction)
+                        and 0.0 <= score.entailment <= 1.0
+                        and 0.0 <= score.contradiction <= 1.0
+                    ):
                         semantic_scores[index] = score
             except Exception as exc:
                 errors["advisory"].append(f"semantic {case.id}: {exc}")
         grading: list[dict[str, Any]] = []
         fact_checks: dict[str, bool] = {}
         fingerprint = semantic_fingerprint(semantic) if semantic is not None else None
-        for fact, lexical_passed, score in zip(
+        for fact, lexical_passed, grade_scores in zip(
             case.required_facts, lexical, semantic_scores, strict=True
         ):
             semantic_passed = (
-                score >= semantic.calibration.threshold
-                if score is not None
+                grade_scores.entailment >= semantic.calibration.threshold
+                if grade_scores is not None
                 and semantic is not None
                 and semantic.calibration.threshold is not None
                 else None
             )
-            final = lexical_passed or semantic_passed is True
+            contradiction_veto = (
+                grade_scores.contradiction >= semantic.calibration.contradiction_threshold
+                if grade_scores is not None
+                and semantic is not None
+                and semantic.calibration.contradiction_threshold is not None
+                else None
+            )
+            semantic_active = semantic is not None and semantic.enabled
+            if semantic_active and grade_scores is None:
+                final = False
+            elif lexical_passed:
+                final = contradiction_veto is not True
+            else:
+                final = semantic_passed is True
             fact_checks[fact.id] = final
             grading.append(
                 {
@@ -397,16 +419,18 @@ class EvaluationApplication:
                     "lexical": lexical_passed,
                     "semantic": semantic_passed,
                     "final": final,
-                    "semantic_score": score,
+                    "semantic_score": grade_scores.entailment if grade_scores is not None else None,
+                    "contradiction_score": (
+                        grade_scores.contradiction if grade_scores is not None else None
+                    ),
+                    "contradiction_veto": contradiction_veto,
                     "model": semantic.model.name if semantic is not None else None,
                     "revision": semantic.model.revision if semantic is not None else None,
                     "fingerprint": fingerprint,
                 }
             )
         cited = set(observation.cited_source_ids)
-        citation_ok = (
-            not cited if case.should_abstain else set(case.expected_source_ids) <= cited
-        )
+        citation_ok = not cited if case.should_abstain else set(case.expected_source_ids) <= cited
         return (
             {
                 "contract": True,
@@ -442,6 +466,8 @@ class EvaluationApplication:
                     else any(normalize(variant) in answer for variant in fact.answer_variants)
                 ),
                 "semantic_score": None,
+                "contradiction_score": None,
+                "contradiction_veto": None,
                 "model": semantic.model.name if semantic is not None else None,
                 "revision": semantic.model.revision if semantic is not None else None,
                 "fingerprint": fingerprint,
@@ -477,17 +503,13 @@ class EvaluationApplication:
         return checks
 
     @staticmethod
-    def _summary(
-        ingestion: IngestionObservation, cases: list[dict[str, Any]]
-    ) -> dict[str, Any]:
+    def _summary(ingestion: IngestionObservation, cases: list[dict[str, Any]]) -> dict[str, Any]:
         retrieval = [
             cast(dict[str, float], case["retrieval"]["metrics"])
             for case in cases
             if case["retrieval"]["metrics"]["recall_at_5"] is not None
         ]
-        generation_valid = [
-            int(case["generation"]["valid_repetitions"]) / 3 for case in cases
-        ]
+        generation_valid = [int(case["generation"]["valid_repetitions"]) / 3 for case in cases]
         retrieval_latencies = [float(case["retrieval"]["latency_ms"]) for case in cases]
         exact_latencies = [float(case["retrieval"]["exact_latency_ms"]) for case in cases]
         generation_latencies = [
@@ -515,11 +537,7 @@ class EvaluationApplication:
         )
         checks_total = ingestion.separation_total + ingestion.cohesion_total
         checks_passed = ingestion.separation_passed + ingestion.cohesion_passed
-        all_checks = [
-            check
-            for case in cases
-            for check in case["generation"]["checks"]
-        ]
+        all_checks = [check for case in cases for check in case["generation"]["checks"]]
         all_fact_grading = [
             grade
             for case in cases
@@ -561,15 +579,14 @@ class EvaluationApplication:
                 "generation_pass_rate": mean(generation_valid),
                 "generation_contract_rate": check_rate({"contract"}),
                 "generation_facts_rate": check_rate(fact_ids),
-                "generation_facts_lexical_rate": _grade_rate(
-                    all_fact_grading, "lexical"
-                ),
+                "generation_facts_lexical_rate": _grade_rate(all_fact_grading, "lexical"),
                 "generation_facts_final_rate": _grade_rate(all_fact_grading, "final"),
-                "generation_semantic_rescue_rate": _semantic_rate(
-                    all_fact_grading, rescued=True
-                ),
+                "generation_semantic_rescue_rate": _semantic_rate(all_fact_grading, rescued=True),
                 "generation_semantic_unresolved_rate": _semantic_rate(
                     all_fact_grading, rescued=False
+                ),
+                "generation_semantic_contradiction_veto_rate": _grade_rate(
+                    all_fact_grading, "contradiction_veto"
                 ),
                 "generation_abstention_rate": check_rate({"abstention"}),
                 "generation_citations_rate": check_rate({"citations"}),
@@ -670,9 +687,9 @@ class EvaluationApplication:
             "fingerprint"
         ):
             raise EvaluationError("Corpus fingerprints differ; quality cannot be compared")
-        if candidate.get("definition", {}).get("fingerprint") != baseline.get(
-            "definition", {}
-        ).get("fingerprint"):
+        if candidate.get("definition", {}).get("fingerprint") != baseline.get("definition", {}).get(
+            "fingerprint"
+        ):
             raise EvaluationError("Benchmark definition fingerprints differ")
 
     def _write_artifacts(self, run: dict[str, Any]) -> None:
@@ -742,14 +759,15 @@ class HermeticEvaluationExecutor:
             ),
         )
 
-    def generate(
-        self, case: EvaluationCase, *, collection: str
-    ) -> GenerationObservation:
+    def generate(self, case: EvaluationCase, *, collection: str) -> GenerationObservation:
         del collection
         answer = (
             "I cannot answer from the available evidence."
             if case.should_abstain
-            else "; ".join(fact.answer_variants[0] for fact in case.required_facts)
+            else "; ".join(
+                fact.semantic_claim or fact.answer_variants[0]
+                for fact in case.required_facts
+            )
         )
         return GenerationObservation(
             answer,
@@ -809,8 +827,7 @@ def render_markdown(run: Mapping[str, Any]) -> str:
         for check in failed_ingestion:
             references = ", ".join(check.get("chunk_references", [])) or "none"
             lines.append(
-                f"- `{check['id']}` ({check['type']}): {check['reason']} "
-                f"— chunks `{references}`"
+                f"- `{check['id']}` ({check['type']}): {check['reason']} — chunks `{references}`"
             )
     else:
         lines.append("- All named chunk checks passed.")
@@ -825,17 +842,14 @@ def render_markdown(run: Mapping[str, Any]) -> str:
             else f"Recall@5 `{recall:.3f}`, MRR `{mrr:.3f}`"
         )
         lines.append(
-            f"- `{case['id']}`: {metric_text}, stability "
-            f"`{case['generation']['stability']}`"
+            f"- `{case['id']}`: {metric_text}, stability `{case['generation']['stability']}`"
         )
         found = ", ".join(case["retrieval"].get("facts_found", [])) or "none"
         missing = ", ".join(case["retrieval"].get("facts_missing", [])) or "none"
         lines.append(f"  - Facts found: `{found}`; missing: `{missing}`")
         for number, repetition in enumerate(case["generation"]["repetitions"], 1):
             if repetition["status"] == "failed":
-                lines.append(
-                    f"  - Repetition {number} failed: {repetition['error']}"
-                )
+                lines.append(f"  - Repetition {number} failed: {repetition['error']}")
     return "\n".join(lines) + "\n"
 
 

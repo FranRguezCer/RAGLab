@@ -25,7 +25,23 @@ from raglab.evaluation.models import (
     EvaluationCase,
     GenerationObservation,
 )
+from raglab.evaluation.semantic import NLIScores
 from raglab.storage import PostgresRepository
+
+
+@pytest.fixture(autouse=True)
+def _stub_semantic_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Scorer:
+        def __init__(self, _config: object) -> None:
+            pass
+
+        def score(self, pairs):  # type: ignore[no-untyped-def]
+            return [
+                NLIScores(0.0 if "Unsupported answer" in premise else 0.99, 0.0)
+                for premise, _hypothesis in pairs
+            ]
+
+    monkeypatch.setattr("raglab.evaluation.application.TransformersNLIScorer", Scorer)
 
 
 def metadata(*, dirty: bool = False, hardware: str = "host-a") -> dict[str, Any]:
@@ -135,7 +151,7 @@ def test_application_runs_three_repetitions_and_persists_artifacts(tmp_path: Pat
     run = application.run(manifest)
 
     assert run["status"] == "complete"
-    assert run["schema_version"] == RUN_SCHEMA_VERSION == 4
+    assert run["schema_version"] == RUN_SCHEMA_VERSION == 5
     assert run["partial"] is False
     assert run["errors"]["hard"] == []
     assert all(case["generation"]["stability"] == "3/3" for case in run["cases"])
@@ -205,9 +221,7 @@ def test_failed_generation_checks_are_recorded_per_repetition(
             super().__init__()
             self.generation_calls = 0
 
-        def generate(
-            self, case: EvaluationCase, *, collection: str
-        ) -> GenerationObservation:
+        def generate(self, case: EvaluationCase, *, collection: str) -> GenerationObservation:
             observation = super().generate(case, collection=collection)
             self.generation_calls += 1
             if self.generation_calls != 1:
@@ -226,8 +240,12 @@ def test_failed_generation_checks_are_recorded_per_repetition(
 
     failed = run["cases"][0]["generation"]["repetitions"][0]
     assert failed["status"] == "failed"
-    expected_check = "low-flow-e17" if failed_check == "required_facts" else failed_check
-    assert failed["error"] == f"Generation checks failed: {expected_check}"
+    expected_checks = {
+        "required_facts": "low-flow-e17",
+        "abstention": "low-flow-e17, abstention",
+        "citations": "citations",
+    }
+    assert failed["error"] == f"Generation checks failed: {expected_checks[failed_check]}"
     assert "raw_output" not in failed
     assert failed["prompt_tokens"] == 100
     assert failed["generated_tokens"] == 20
@@ -235,10 +253,13 @@ def test_failed_generation_checks_are_recorded_per_repetition(
     assert failed["latency_ms"] == 3.0
     assert run["summary"]["quality"]["generation_pass_rate"] == pytest.approx(35 / 36)
     assert run["errors"]["hard"] == [
-        f"aster-low-flow repetition 1: Generation checks failed: {expected_check}"
+        f"aster-low-flow repetition 1: Generation checks failed: {expected_checks[failed_check]}"
     ]
     markdown = (tmp_path / f"{run['run_id']}.md").read_text()
-    assert f"Repetition 1 failed: Generation checks failed: {expected_check}" in markdown
+    assert (
+        f"Repetition 1 failed: Generation checks failed: {expected_checks[failed_check]}"
+        in markdown
+    )
 
 
 def test_operational_generation_error_still_aborts_the_run(tmp_path: Path) -> None:
@@ -273,9 +294,9 @@ def test_compare_checks_compatibility_and_hardware(tmp_path: Path) -> None:
         metadata_provider=lambda: metadata(hardware="host-b"),
     ).run(manifest, persist=False)
 
-    comparison = EvaluationApplication(
-        HermeticEvaluationExecutor(), artifact_dir=tmp_path
-    ).compare(candidate, baseline)
+    comparison = EvaluationApplication(HermeticEvaluationExecutor(), artifact_dir=tmp_path).compare(
+        candidate, baseline
+    )
     assert comparison["verdict"] == "no_clear_change"
     assert comparison["latency_compatible"] is False
     assert "latency" not in comparison
@@ -329,9 +350,7 @@ def test_judge_is_advisory_and_must_use_a_different_model(tmp_path: Path) -> Non
             return {"grounded": bool(answer), "relevant": True, "reason": "controlled"}
 
     with pytest.raises(EvaluationError, match="must differ"):
-        EvaluationApplication(
-            HermeticEvaluationExecutor(), judge=Judge(), generation_model="judge"
-        )
+        EvaluationApplication(HermeticEvaluationExecutor(), judge=Judge(), generation_model="judge")
     run = EvaluationApplication(
         HermeticEvaluationExecutor(),
         artifact_dir=tmp_path,

@@ -1,0 +1,77 @@
+{
+  "source_artifact": "20260825T153524.720063Z",
+  "rows": [
+    {
+      "fact_id": "low-flow-e17",
+      "answer": "The controller closes the active valve and raises fault code E17 when irrigation flow remains too low, indicating that flow has stayed below 1.2 liters per minute for 8 seconds. The controller does not extend the watering window to compensate for missing flow. Possible causes include a closed manual valve, blocked filter, disconnected meter, or empty supply tank. To resolve, confirm water supply and manual valve status, inspect the filter, and run a two-minute test in Assist mode after corrections. Fault code E17 remains in the audit log until cleared when flow stays above 1.2 L/min for the full test."
+    },
+    {
+      "fact_id": "low-flow-e17",
+      "answer": "The controller closes the active valve and raises fault code E17 when irrigation flow remains too low, indicating that flow has stayed below 1.2 liters per minute for 8 seconds. The controller does not extend the watering window to compensate for missing flow. Possible causes include a closed manual valve, blocked filter, disconnected meter, or empty supply tank. To resolve, confirm water supply and manual valve status, inspect the filter, and run a two-minute test in Assist mode after corrections. Fault code E17 remains in the audit log until cleared when flow stays above 1.2 L/min for the full test."
+    },
+    {
+      "fact_id": "low-flow-e17",
+      "answer": "The controller closes the active valve and raises fault code E17 when irrigation flow remains too low, indicating that flow has stayed below 1.2 liters per minute for 8 seconds. The controller does not extend the watering window to compensate for missing flow. Possible causes include a closed manual valve, blocked filter, disconnected meter, or empty supply tank. To resolve, confirm water supply and manual valve status, inspect the filter, and run a two-minute test in Assist mode after corrections. Fault code E17 remains in the audit log until cleared when flow stays above 1.2 L/min for the full test."
+    },
+    {
+      "fact_id": "isolation-record-e41",
+      "answer": "If the isolation banner does not appear, the operator should check the isolation switch wiring for faults."
+    },
+    {
+      "fact_id": "isolation-record-e41",
+      "answer": "If the isolation banner does not appear, the operator should check the isolation switch wiring for faults."
+    },
+    {
+      "fact_id": "isolation-record-e41",
+      "answer": "If the isolation banner does not appear, the operator should check the isolation switch wiring for faults."
+    },
+    {
+      "fact_id": "request-duration-histogram",
+      "answer": "Orbit should record request duration in a histogram with standard bucket bounds: 5: 50, 100, 250, 500, 1000, 2500 milliseconds. This allows for stable p95 calculation while preserving distribution between releases. Metric labels must have bounded cardinality and should include route template, region, HTTP method, and status class. Never use user ID, session ID, or raw request path as metric labels. Release dashboard shows request volume, HTTP 5xx rate, p95 duration, and deployment marker. To calculate release latency, compare canary with previous release over identical windows to detect small regressions. A healthy canary may advance to 25 percent and then 100 percent. If the canary produces more than 2 percent HTTP 5xx responses for three consecutive one-minute windows, roll back immediately. After rollback, purge the affected release with its surrogate keys but do not purge unrelated tenants. Record the policy version and canary window in the deployment log before traffic is restored."
+    },
+    {
+      "fact_id": "request-duration-histogram",
+      "answer": "Orbit should record request duration in a histogram with standard bucket bounds: 5: 50, 100, 250, 500, 1000, 2500 milliseconds. This allows for stable p95 calculation while preserving distribution between releases. Metric labels must have bounded cardinality and should include route template, region, HTTP method, and status class. Never use user ID, session ID, or raw request path as metric labels. Release dashboard shows request volume, HTTP 5xx rate, p95 duration, and deployment marker. To calculate release latency, compare canary with previous release over identical windows to detect small regressions. A healthy canary may advance to 25 percent and then 100 percent. If the canary produces more than 2 percent HTTP 5xx responses for three consecutive one-minute windows, roll back immediately. After rollback, purge the affected release with its surrogate keys but do not purge unrelated tenants. Record the policy version and canary window in the deployment log before traffic is restored."
+    },
+    {
+      "fact_id": "request-duration-histogram",
+      "answer": "Orbit should record request duration in a histogram with standard bucket bounds: 5: 50, 100, 250, 500, 1000, 2500 milliseconds. This allows for stable p95 calculation while preserving distribution between releases. Metric labels must have bounded cardinality and should include route template, region, HTTP method, and status class. Never use user ID, session ID, or raw request path as metric labels. Release dashboard shows request volume, HTTP 5xx rate, p95 duration, and deployment marker. To calculate release latency, compare canary with previous release over identical windows to detect small regressions. A healthy canary may advance to 25 percent and then 100 percent. If the canary produces more than 2 percent HTTP 5xx responses for three consecutive one-minute windows, roll back immediately. After rollback, purge the affected release with its surrogate keys but do not purge unrelated tenants. Record the policy version and canary window in the deployment log before traffic is restored."
+    },
+    {
+      "fact_id": "rollback-release-invalidation",
+      "answer": "After a faulty cache release is rolled back, the affected cache entries should be purged using surrogate keys to invalidate only the affected release, and the incident record should be updated with the released artifact, affected region, final customer impact, policy version, and can: window from the deployment log. Stale cached pages should be handled by asking the cache operator to invalidate only the affected release after the service is healthy. The error budget burn must return to normal and a synthetic request must succeed from two regions for fifteen minutes before resolving the incident. A quiet alert alone is not proof of recovery. Do not purge unrelated tenants, and ensure the cache key contains tenant ID, normalized path, and content language without the Authorization header or raw query-string order."
+    },
+    {
+      "fact_id": "rollback-release-invalidation",
+      "answer": "After a faulty cache release is rolled back, the affected cache entries should be purged using surrogate keys to invalidate only the affected release, and the incident record should be updated with the released artifact, affected region, final customer impact, policy version, and can: window from the deployment log. Stale cached pages should be handled by asking the cache operator to invalidate only the affected release after the service is healthy. The error budget burn must return to normal and a synthetic request must succeed from two regions for fifteen minutes before resolving the incident. A quiet alert alone is not proof of recovery. Do not purge unrelated tenants, and ensure the cache key contains tenant ID, normalized path, and content language without the Authorization header or raw query-string order."
+    },
+    {
+      "fact_id": "rollback-release-invalidation",
+      "answer": "After a faulty cache release is rolled back, the affected cache entries should be purged using surrogate keys to invalidate only the affected release, and the incident record should be updated with the released artifact, affected region, final customer impact, policy version, and can: window from the deployment log. Stale cached pages should be handled by asking the cache operator to invalidate only the affected release after the service is healthy. The error budget burn must return to normal and a synthetic request must succeed from two regions for fifteen minutes before resolving the incident. A quiet alert alone is not proof of recovery. Do not purge unrelated tenants, and ensure the cache key contains tenant ID, normalized path, and content language without the Authorization header or raw query-string order."
+    },
+    {
+      "fact_id": "canary-immediate-rollback",
+      "answer": "Roll back the canary immediately as it has exceeded 2 percent HTTP 5xx responses for three consecutive one-minute windows, then purge the affected release with its surrogate keys."
+    },
+    {
+      "fact_id": "canary-immediate-rollback",
+      "answer": "Roll back the canary immediately because HTTP 5xx responses have exceeded 2 percent for three consecutive one-minute windows, which triggers the roll back condition as per the facts."
+    },
+    {
+      "fact_id": "canary-immediate-rollback",
+      "answer": "Roll back the canary immediately because HTTP 5xx responses have exceeded 2 percent for three consecutive one-minute windows, which triggers the roll back condition as per the facts."
+    },
+    {
+      "fact_id": "metric-label-raw-path",
+      "answer": "user ID"
+    },
+    {
+      "fact_id": "metric-label-raw-path",
+      "answer": "user ID"
+    },
+    {
+      "fact_id": "metric-label-raw-path",
+      "answer": "user ID"
+    }
+  ]
+}

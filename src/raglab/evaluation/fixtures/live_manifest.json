@@ -14,15 +14,16 @@
     "semantic": {
       "enabled": false,
       "model": {
-        "name": "cross-encoder/nli-deberta-v3-small",
-        "revision": "fa2804872c3b4bd748f38c0185cc85775361e735",
+        "name": "tasksource/deberta-small-long-nli",
+        "revision": "9a77395d4d3751be9e2a69c4ae318491d9b3fffb",
         "device": "cpu",
         "batch_size": 8,
         "max_tokens": 512
       },
       "calibration": {
-        "fixture": "semantic_calibration_v1.json",
+        "fixture": "semantic_calibration_v2.json",
         "threshold": null,
+        "contradiction_threshold": null,
         "fingerprint": null
       },
       "template": {

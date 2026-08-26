@@ -5,12 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-RUN_SCHEMA_VERSION = 4
+RUN_SCHEMA_VERSION = 5
 PROTECTED_COLLECTION_PREFIX = "raglab-eval-"
 VERDICTS = {"improved", "regressed", "mixed", "no_clear_change"}
 RUN_JSON_SCHEMA: dict[str, Any] = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://raglab.local/schemas/evaluation-run-v4.json",
+    "$id": "https://raglab.local/schemas/evaluation-run-v5.json",
     "type": "object",
     "required": [
         "schema_version",
@@ -86,6 +86,7 @@ class SemanticModelConfig:
 class SemanticCalibrationConfig:
     fixture: str
     threshold: float | None
+    contradiction_threshold: float | None
     fingerprint: str | None
 
 
@@ -183,9 +184,7 @@ class EvaluationExecutor(Protocol):
         self, case: EvaluationCase, *, collection: str, exact: bool
     ) -> RetrievalObservation: ...
 
-    def generate(
-        self, case: EvaluationCase, *, collection: str
-    ) -> GenerationObservation: ...
+    def generate(self, case: EvaluationCase, *, collection: str) -> GenerationObservation: ...
 
     def release_generator(self) -> None: ...
 

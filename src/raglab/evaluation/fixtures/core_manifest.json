@@ -11,18 +11,19 @@
     },
     "generation_repetitions": 3,
     "semantic": {
-      "enabled": false,
+      "enabled": true,
       "model": {
-        "name": "cross-encoder/nli-deberta-v3-small",
-        "revision": "fa2804872c3b4bd748f38c0185cc85775361e735",
+        "name": "tasksource/deberta-small-long-nli",
+        "revision": "9a77395d4d3751be9e2a69c4ae318491d9b3fffb",
         "device": "cpu",
         "batch_size": 8,
         "max_tokens": 512
       },
       "calibration": {
-        "fixture": "semantic_calibration_v1.json",
-        "threshold": null,
-        "fingerprint": null
+        "fixture": "semantic_calibration_v2.json",
+        "threshold": 0.3138722777366639,
+        "contradiction_threshold": 0.47856047749519354,
+        "fingerprint": "66d26dc318099c8dff68622a3b32b653840abb25429930f828e89b887177c125"
       },
       "template": {
         "premise": "{answer}",

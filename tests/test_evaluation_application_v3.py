@@ -9,7 +9,21 @@ import pytest
 from raglab.errors import EvaluationError, GenerationContractError
 from raglab.evaluation import EvaluationApplication, HermeticEvaluationExecutor, load_manifest
 from raglab.evaluation import cli as evaluation_cli
+from raglab.evaluation.application import render_markdown
 from raglab.evaluation.models import EvaluationCase
+from raglab.evaluation.semantic import NLIScores
+
+
+@pytest.fixture(autouse=True)
+def _stub_semantic_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Scorer:
+        def __init__(self, _config: object) -> None:
+            pass
+
+        def score(self, pairs):  # type: ignore[no-untyped-def]
+            return [NLIScores(0.99, 0.0) for _ in pairs]
+
+    monkeypatch.setattr("raglab.evaluation.application.TransformersNLIScorer", Scorer)
 
 
 def _metadata(*, dirty: bool = False) -> dict[str, object]:
@@ -29,7 +43,7 @@ def test_v3_run_records_definition_evidence_checks_and_separate_quality_axes(
 ) -> None:
     run = _run(tmp_path)
 
-    assert run["schema_version"] == 4
+    assert run["schema_version"] == 5
     assert len(run["definition"]["fingerprint"]) == 64
     assert run["definition"]["manifest"]["profile"] == "core"
     assert len(run["ingestion"]["checks"]) == 6
@@ -38,9 +52,7 @@ def test_v3_run_records_definition_evidence_checks_and_separate_quality_axes(
         "must_keep",
     }
     abstention = next(
-        case
-        for case in run["cases"]
-        if case["id"] == "unsupported-password-rotation"
+        case for case in run["cases"] if case["id"] == "unsupported-password-rotation"
     )
     assert all(value is None for value in abstention["retrieval"]["metrics"].values())
     assert abstention["retrieval"]["ranges"] == []
@@ -48,6 +60,20 @@ def test_v3_run_records_definition_evidence_checks_and_separate_quality_axes(
         run["summary"]["quality"]
     )
     assert all(0.0 <= value <= 1.0 for value in run["summary"]["quality"].values())
+
+
+def test_v4_artifact_remains_inspectable_but_not_comparable_or_promotable(
+    tmp_path: Path,
+) -> None:
+    current = _run(tmp_path)
+    legacy = copy.deepcopy(current)
+    legacy["schema_version"] = 4
+
+    assert "# RAG evaluation" in render_markdown(legacy)
+    with pytest.raises(EvaluationError, match="schema v5"):
+        EvaluationApplication(HermeticEvaluationExecutor()).compare(current, legacy)
+    with pytest.raises(EvaluationError, match="schema v5"):
+        EvaluationApplication(HermeticEvaluationExecutor()).promote(legacy)
 
 
 def test_contract_failure_uses_null_for_checks_without_observable_fields(
@@ -62,9 +88,9 @@ def test_contract_failure_uses_null_for_checks_without_observable_fields(
                 raise GenerationContractError("invalid JSON", raw_output="not-json")
             return super().generate(case, collection=collection)
 
-    run = EvaluationApplication(
-        MissingFieldsExecutor(), metadata_provider=_metadata
-    ).run(load_manifest(), persist=False)
+    run = EvaluationApplication(MissingFieldsExecutor(), metadata_provider=_metadata).run(
+        load_manifest(), persist=False
+    )
     checks = run["cases"][0]["generation"]["checks"][0]
 
     assert checks["contract"] is False
@@ -77,7 +103,7 @@ def test_contract_failure_uses_null_for_checks_without_observable_fields(
 @pytest.mark.parametrize(
     ("mutate", "message"),
     [
-        (lambda run: run.update(schema_version=3), "schema v4"),
+        (lambda run: run.update(schema_version=3), "schema v5"),
         (lambda run: run.update(partial=True), "partial"),
         (lambda run: run["metadata"].update(dirty=True), "dirty"),
         (lambda run: run["errors"]["hard"].append("failure"), "hard failures"),
@@ -88,7 +114,9 @@ def test_contract_failure_uses_null_for_checks_without_observable_fields(
     ],
 )
 def test_compare_rejects_ineligible_or_incompatible_v3_runs(
-    tmp_path: Path, mutate, message: str  # type: ignore[no-untyped-def]
+    tmp_path: Path,
+    mutate,
+    message: str,  # type: ignore[no-untyped-def]
 ) -> None:
     baseline = _run(tmp_path)
     candidate = copy.deepcopy(baseline)
@@ -103,7 +131,7 @@ def test_promotion_rejects_legacy_v3_run(tmp_path: Path) -> None:
     run = _run(tmp_path)
     run["schema_version"] = 3
 
-    with pytest.raises(EvaluationError, match="schema v4"):
+    with pytest.raises(EvaluationError, match="schema v5"):
         EvaluationApplication(HermeticEvaluationExecutor()).promote(run)
 
 
@@ -136,9 +164,7 @@ def test_run_cli_prints_compact_receipt_and_full_json(
     assert set(compact) == {"run_id", "artifacts", "status", "quality", "error_count"}
     assert compact["error_count"] == 0
 
-    assert evaluation_cli.main(
-        ["--artifact-dir", str(tmp_path), "run", "--full-json"]
-    ) == 0
+    assert evaluation_cli.main(["--artifact-dir", str(tmp_path), "run", "--full-json"]) == 0
     full = json.loads(capsys.readouterr().out)
-    assert full["schema_version"] == 4
+    assert full["schema_version"] == 5
     assert len(full["cases"]) == 12

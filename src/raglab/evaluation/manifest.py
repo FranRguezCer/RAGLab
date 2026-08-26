@@ -186,12 +186,16 @@ def _validate(manifest: EvaluationManifest, *, requested_profile: str) -> None:
         )
     source_ids = [source.id for source in manifest.sources]
     case_ids = [case.id for case in manifest.cases]
-    if not source_ids or any(not value.strip() for value in source_ids) or len(source_ids) != len(
-        set(source_ids)
+    if (
+        not source_ids
+        or any(not value.strip() for value in source_ids)
+        or len(source_ids) != len(set(source_ids))
     ):
         raise EvaluationError("Evaluation source ids must be non-empty and unique")
-    if not case_ids or any(not value.strip() for value in case_ids) or len(case_ids) != len(
-        set(case_ids)
+    if (
+        not case_ids
+        or any(not value.strip() for value in case_ids)
+        or len(case_ids) != len(set(case_ids))
     ):
         raise EvaluationError("Evaluation case ids must be non-empty and unique")
     known = set(source_ids)
@@ -210,21 +214,15 @@ def _validate(manifest: EvaluationManifest, *, requested_profile: str) -> None:
             if not fact.evidence_anchors or any(
                 not anchor.strip() for anchor in fact.evidence_anchors
             ):
-                raise EvaluationError(
-                    f"Required fact {fact.id!r} needs non-empty evidence anchors"
-                )
+                raise EvaluationError(f"Required fact {fact.id!r} needs non-empty evidence anchors")
             if not fact.answer_variants or any(
                 not variant.strip() for variant in fact.answer_variants
             ):
-                raise EvaluationError(
-                    f"Required fact {fact.id!r} needs non-empty answer variants"
-                )
+                raise EvaluationError(f"Required fact {fact.id!r} needs non-empty answer variants")
             if manifest.schema_version >= 3 and (
                 fact.semantic_claim is None or not fact.semantic_claim.strip()
             ):
-                raise EvaluationError(
-                    f"Required fact {fact.id!r} needs a non-empty semantic_claim"
-                )
+                raise EvaluationError(f"Required fact {fact.id!r} needs a non-empty semantic_claim")
     fact_ids = [fact.id for case in manifest.cases for fact in case.required_facts]
     if len(fact_ids) != len(set(fact_ids)):
         raise EvaluationError("Required fact ids must be non-empty and unique")
@@ -285,9 +283,7 @@ def _facts(case_id: str, value: object, *, version: int) -> tuple[FactExpectatio
                     id=str(item["id"]),
                     evidence_anchors=_strings(item["evidence_anchors"]),
                     answer_variants=_strings(item["answer_variants"]),
-                    semantic_claim=(
-                        str(item["semantic_claim"]) if version >= 3 else None
-                    ),
+                    semantic_claim=(str(item["semantic_claim"]) if version >= 3 else None),
                 )
             )
         except KeyError as exc:
@@ -323,6 +319,11 @@ def _semantic_config(value: object, base_path: Path, version: int) -> SemanticCo
                     if calibration.get("threshold") is not None
                     else None
                 ),
+                contradiction_threshold=(
+                    float(calibration["contradiction_threshold"])
+                    if calibration.get("contradiction_threshold") is not None
+                    else None
+                ),
                 fingerprint=_optional_str(calibration.get("fingerprint")),
             ),
             template=SemanticTemplateConfig(
@@ -351,7 +352,9 @@ def _semantic_config(value: object, base_path: Path, version: int) -> SemanticCo
     if result.template.premise != "{answer}" or result.template.hypothesis != "{semantic_claim}":
         raise EvaluationError("Manifest v3 semantic template must compare answer to semantic_claim")
     if result.enabled and (
-        result.calibration.threshold is None or result.calibration.fingerprint is None
+        result.calibration.threshold is None
+        or result.calibration.contradiction_threshold is None
+        or result.calibration.fingerprint is None
     ):
         raise EvaluationError(
             "Enabled semantic rescue requires calibrated threshold and fingerprint"
@@ -362,6 +365,11 @@ def _semantic_config(value: object, base_path: Path, version: int) -> SemanticCo
         raise EvaluationError("Semantic calibration fixture fingerprint does not match")
     if result.calibration.threshold is not None and not 0.0 <= result.calibration.threshold <= 1.0:
         raise EvaluationError("Semantic calibration threshold must be between zero and one")
+    if (
+        result.calibration.contradiction_threshold is not None
+        and not 0.0 <= result.calibration.contradiction_threshold <= 1.0
+    ):
+        raise EvaluationError("Semantic contradiction threshold must be between zero and one")
     return result
 
 

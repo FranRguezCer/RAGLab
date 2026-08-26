@@ -81,12 +81,17 @@ def test_packaged_manifest_v3_loads_typed_bounded_semantic_contract() -> None:
 
     assert manifest.schema_version == 3
     assert semantic is not None
-    assert semantic.enabled is False
-    assert semantic.model.name == "cross-encoder/nli-deberta-v3-small"
-    assert semantic.model.revision == "fa2804872c3b4bd748f38c0185cc85775361e735"
+    assert semantic.enabled is True
+    assert semantic.model.name == "tasksource/deberta-small-long-nli"
+    assert semantic.model.revision == "9a77395d4d3751be9e2a69c4ae318491d9b3fffb"
     assert semantic.model.device == "cpu"
     assert semantic.model.batch_size == 8
     assert semantic.model.max_tokens == 512
+    assert semantic.calibration.threshold == 0.3138722777366639
+    assert semantic.calibration.contradiction_threshold == 0.47856047749519354
+    assert semantic.calibration.fingerprint == (
+        "66d26dc318099c8dff68622a3b32b653840abb25429930f828e89b887177c125"
+    )
     assert semantic.template.premise == "{answer}"
     assert semantic.template.hypothesis == "{semantic_claim}"
     assert all(
