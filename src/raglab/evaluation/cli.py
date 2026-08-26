@@ -17,6 +17,7 @@ from raglab.evaluation.manifest import load_manifest
 from raglab.evaluation.models import EvaluationExecutor
 from raglab.evaluation.runtime import LiveEvaluationExecutor, OllamaEvaluationJudge
 from raglab.evaluation.semantic import TransformersNLIScorer, calibrate
+from raglab.generation.grounding import EvidenceClaimVerifier
 from raglab.retrieval.cli import DEFAULT_DSN
 
 
@@ -72,6 +73,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command == "run":
             manifest = load_manifest(args.manifest, profile=args.profile)
+            semantic_scorer = (
+                TransformersNLIScorer(manifest.semantic) if manifest.semantic is not None else None
+            )
             judge = (
                 OllamaEvaluationJudge(args.judge_model, base_url=args.ollama_base_url)
                 if args.judge_model
@@ -82,6 +86,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 generation_model=args.model,
                 embedding_model=args.embedding_model,
                 ollama_base_url=args.ollama_base_url,
+                grounding_verifier=EvidenceClaimVerifier(semantic_scorer),
             )
             application = EvaluationApplication(
                 executor,
@@ -89,6 +94,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 judge=judge,
                 generation_model=args.model,
                 embedding_model=args.embedding_model,
+                semantic_scorer=semantic_scorer,
             )
             result = application.run(manifest, reuse_index=args.reuse_index)
         elif args.command == "calibrate-semantic":

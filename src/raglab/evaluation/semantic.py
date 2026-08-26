@@ -24,9 +24,11 @@ from raglab.nli import (
     NLI_REVISION,
     NLI_SNAPSHOT_FILES,
     NLIScorer,
-    NLIScores,
     PinnedNLIError,
     PinnedTransformersNLIScorer,
+)
+from raglab.nli import (
+    NLIScores as _NLIScores,
 )
 
 SEMANTIC_MODEL = NLI_MODEL
@@ -34,6 +36,7 @@ SEMANTIC_REVISION = NLI_REVISION
 SEMANTIC_SNAPSHOT_FILES = NLI_SNAPSHOT_FILES
 MAX_BATCH_SIZE = _MAX_BATCH_SIZE
 MAX_TOKENS = _MAX_TOKENS
+NLIScores = _NLIScores
 CALIBRATION_PAIRS = 128
 HOLDOUT_PAIRS = 112
 CALIBRATION_RESCUE_PAIRS = 48

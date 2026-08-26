@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "calibration": [
+    {"evidence_quote": "The controller closes the valve and raises E41 when pressure stays above the shutdown threshold.", "claim": "The controller raises E41 when pressure stays above the shutdown threshold.", "supported": true},
+    {"evidence_quote": "Metrics must remove the user ID and raw request path before export.", "claim": "Metrics must remove the user ID before export.", "supported": true},
+    {"evidence_quote": "Metrics must remove the user ID and raw request path before export.", "claim": "Metrics must remove the raw request path before export.", "supported": true},
+    {"evidence_quote": "Pause the Harbor rollout and roll back Harbor immediately.", "claim": "Harbor must be rolled back immediately.", "supported": true},
+    {"evidence_quote": "Requests time out after 30 seconds unless streaming is enabled.", "claim": "Requests time out after 30 seconds unless streaming is enabled.", "supported": true},
+    {"evidence_quote": "The audit record contains the actor and timestamp.", "claim": "The audit record contains a timestamp.", "supported": true},
+    {"evidence_quote": "Passwords are hashed with Argon2 before storage.", "claim": "Passwords must be rotated every 90 days.", "supported": false},
+    {"evidence_quote": "The controller raises E41 when pressure stays above the shutdown threshold.", "claim": "The controller raises E17 when pressure stays above the shutdown threshold.", "supported": false},
+    {"evidence_quote": "Backups run only when the primary database is healthy.", "claim": "Backups run only when the primary database is unhealthy.", "supported": false},
+    {"evidence_quote": "The feature is disabled for guest users.", "claim": "The feature is enabled for guest users.", "supported": false},
+    {"evidence_quote": "Metrics must remove the user ID and raw request path before export.", "claim": "Metrics must remove the region before export.", "supported": false},
+    {"evidence_quote": "The diagnosis code is D14; remediation is documented elsewhere.", "claim": "The required remediation action is E41.", "supported": false}
+  ],
+  "holdout": [
+    {"evidence_quote": "If the canary alert fires, immediately roll back Meridian.", "claim": "Meridian must be rolled back immediately when the canary alert fires.", "supported": true},
+    {"evidence_quote": "The response includes account status and the renewal date.", "claim": "The response includes the renewal date.", "supported": true},
+    {"evidence_quote": "Remove session ID and region from every telemetry label.", "claim": "Session ID must be removed from telemetry labels.", "supported": true},
+    {"evidence_quote": "Use SKIPPED_WET_BED when the bed is wet.", "claim": "A wet bed maps to SKIPPED_WET_BED.", "supported": true},
+    {"evidence_quote": "The worker retries twice after a transient network failure.", "claim": "Transient network failures are retried twice.", "supported": true},
+    {"evidence_quote": "Access requires both a signed token and an active account.", "claim": "Access requires an active account.", "supported": true},
+    {"evidence_quote": "Tokens expire after fifteen minutes.", "claim": "Tokens never expire.", "supported": false},
+    {"evidence_quote": "Raise E41 when pressure exceeds the limit.", "claim": "Raise E41 when pressure remains below the limit.", "supported": false},
+    {"evidence_quote": "The cache stores public catalog entries.", "claim": "The cache stores user passwords.", "supported": false},
+    {"evidence_quote": "Only administrators can delete projects.", "claim": "Guests can delete projects.", "supported": false},
+    {"evidence_quote": "The alert identifies the diagnosis but does not prescribe an action.", "claim": "The alert prescribes an immediate rollback.", "supported": false},
+    {"evidence_quote": "Exported metrics contain service and operation labels.", "claim": "Exported metrics contain raw request paths.", "supported": false}
+  ]
+}

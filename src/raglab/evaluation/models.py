@@ -147,6 +147,10 @@ class GenerationObservation:
     generated_tokens: int | None
     model_calls: int
     latency_ms: float
+    facts_extracted: int = 0
+    facts_accepted: int = 0
+    facts_rejected: int = 0
+    facts_used: int = 0
 
 
 @dataclass(frozen=True, slots=True)

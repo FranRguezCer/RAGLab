@@ -24,6 +24,11 @@ raglab-evaluate = "raglab.evaluation.cli:entrypoint"
 conversion = ["docling>=2,<3", "easyocr>=1.7,<2"]
 tokenizers = ["transformers>=4.51,<5"]
 retrieval = ["transformers>=4.51,<5", "torch>=2.5,<3"]
+generation = [
+  "huggingface-hub>=0.30,<1",
+  "torch>=2.5,<3",
+  "transformers>=4.51,<5",
+]
 evaluation = [
   "huggingface-hub>=0.30,<1",
   "torch>=2.5,<3",
@@ -45,6 +50,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 "raglab.storage.migrations" = ["*.sql"]
 "raglab.evaluation.fixtures" = ["*.json", "*.md", "core/*.md"]
+"raglab.generation.fixtures" = ["*.json"]
 
 [tool.pytest.ini_options]
 addopts = "-ra"

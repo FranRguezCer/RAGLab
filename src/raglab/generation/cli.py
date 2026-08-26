@@ -12,6 +12,7 @@ from pathlib import Path
 from raglab.config import load_project_env
 from raglab.embeddings import OllamaEmbeddingProvider
 from raglab.errors import RagLabError
+from raglab.generation.grounding import EvidenceClaimVerifier
 from raglab.generation.models import GenerationConfig, GenerationRequest
 from raglab.generation.ollama import OllamaGenerationModel
 from raglab.generation.pipeline import GenerationPipeline
@@ -133,6 +134,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         pipeline = GenerationPipeline(
             retrieval,
             OllamaGenerationModel(base_url=args.ollama_base_url),
+            grounding_verifier=EvidenceClaimVerifier(),
             embedding_model=args.embedding_model,
         )
         response = pipeline.generate(GenerationRequest(retrieval_request, generation_config))

@@ -1,5 +1,6 @@
 """Strict local RAG generation API."""
 
+from raglab.generation.grounding import EvidenceClaimVerifier
 from raglab.generation.models import (
     GeneratedSource,
     GenerationConfig,
@@ -15,6 +16,7 @@ from raglab.generation.pipeline import GenerationPipeline
 
 __all__ = [
     "GeneratedSource",
+    "EvidenceClaimVerifier",
     "GenerationConfig",
     "GenerationMetrics",
     "GenerationModel",

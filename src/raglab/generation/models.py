@@ -78,6 +78,10 @@ class GenerationMetrics:
     estimated_prompt_tokens: int
     prompt_tokens: int | None
     generated_tokens: int | None
+    facts_extracted: int = 0
+    facts_accepted: int = 0
+    facts_rejected: int = 0
+    facts_used: int = 0
 
 
 @dataclass(frozen=True, slots=True)

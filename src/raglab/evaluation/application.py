@@ -799,6 +799,10 @@ class HermeticEvaluationExecutor:
             20,
             1,
             3.0 * self.latency_scale,
+            len(case.required_facts),
+            len(case.required_facts),
+            0,
+            0 if case.should_abstain else len(case.required_facts),
         )
 
     def release_generator(self) -> None:

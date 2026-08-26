@@ -29,7 +29,9 @@ from raglab.evaluation.models import (
     RetrievalObservation,
 )
 from raglab.generation import GenerationConfig, GenerationPipeline, GenerationRequest
+from raglab.generation.grounding import EvidenceClaimVerifier
 from raglab.generation.ollama import OllamaGenerationModel
+from raglab.nli import ClaimVerifier
 from raglab.pipeline import ingest
 from raglab.retrieval import (
     CollectionMetadata,
@@ -67,12 +69,14 @@ class LiveEvaluationExecutor(EvaluationExecutor):
         embedding_model: str = "qwen3-embedding:0.6b",
         ollama_base_url: str = "http://127.0.0.1:11434",
         keep_alive: str = "5m",
+        grounding_verifier: ClaimVerifier | None = None,
     ) -> None:
         self.dsn = dsn
         self.generation_model = generation_model
         self.embedding_model = embedding_model
         self.ollama_base_url = ollama_base_url.rstrip("/")
         self.keep_alive = keep_alive
+        self.grounding_verifier = grounding_verifier or EvidenceClaimVerifier()
         self.storage = PostgresRepository(dsn)
         self._manifest: EvaluationManifest | None = None
         self._source_ids: dict[str, str] = {}
@@ -270,6 +274,7 @@ class LiveEvaluationExecutor(EvaluationExecutor):
         pipeline = GenerationPipeline(
             fixed,
             self._model,
+            grounding_verifier=self.grounding_verifier,
             embedding_model=self.embedding_model,
         )
         started = time.perf_counter()
@@ -301,6 +306,10 @@ class LiveEvaluationExecutor(EvaluationExecutor):
             result.metrics.generated_tokens,
             result.metrics.model_calls,
             (time.perf_counter() - started) * 1000,
+            result.metrics.facts_extracted,
+            result.metrics.facts_accepted,
+            result.metrics.facts_rejected,
+            result.metrics.facts_used,
         )
 
     def release_generator(self) -> None:
