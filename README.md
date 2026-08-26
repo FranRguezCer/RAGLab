@@ -203,7 +203,11 @@ flowchart TD
 
 Native `.md`, `.markdown`, and `.txt` files use a lossless direct converter. PDF, HTML, DOCX, ODT,
 ODS, ODP, and other supported complex formats use local Docling. Public URLs are downloaded and
-converted locally by default.
+converted locally by default. Every URL fetch accepts only HTTP(S) without embedded credentials,
+requires DNS to resolve exclusively to public, non-multicast addresses, and repeats that validation
+before following each redirect. Localhost, private, loopback, link-local, reserved, multicast,
+mixed public/private, and unresolvable targets fail with `UnsafeRemoteURLError`. The same policy
+applies to the original URL passed to the opt-in Jina path; there is no private-network bypass.
 
 Every successful path emits canonical Markdown plus source identity, converter version, content
 hash, and observable line/page provenance. RAGLab never invents page 1 for a source without
@@ -213,7 +217,11 @@ parsing, embedding, and storage failures remain hard failures.
 ### AST, structure, and semantic boundaries
 
 The Markdown parser builds an AST so headings, paragraphs, lists, tables, and code blocks remain
-recognizable. These structural units are the first chunk candidates. Maximum-size, heading, and
+recognizable. Parsing succeeds only when it produces at least one non-empty block; otherwise it
+raises `ParsingError`. A heading-only document is valid Markdown and therefore can satisfy this
+parser contract, but it still has no body text to retrieve.
+
+These structural units are the first chunk candidates. Maximum-size, heading, and
 semantic cuts are hard boundaries, even when either side is smaller than `min_tokens`. Target-size
 cuts are flexible: a small trailing group may merge backward only within the same heading and
 without exceeding `max_tokens`. This makes `min_tokens` a preferred size rather than permission to
@@ -223,7 +231,10 @@ discarded.
 
 The chunker preserves faithful `content`. It builds separate `embedding_text` from the title,
 heading breadcrumbs, and faithful chunk. That contextual text creates the final vector, while
-retrieval returns only `content`.
+retrieval returns only `content`. Chunking must produce at least one searchable chunk or it raises
+`ChunkingError`. The ingestion pipeline checks this invariant again for injected parser or chunker
+implementations before consulting idempotency state, requesting final embeddings, or writing to
+PostgreSQL. A document that cannot become searchable is never reported as indexed.
 
 ### Final embeddings and atomic storage
 
@@ -276,7 +287,7 @@ fail before ingestion.
 | `--max-tokens` | Stored value; new collection: `768` | Hard upper bound. Raising it increases context and embedding cost. |
 | `--semantic-percentile` | Stored value; new collection: `90` | Lower values split more often; higher values require stronger evidence. |
 | internal overlap | `0` | Fixed default; avoids duplicated evidence. |
-| `--use-jina` | Disabled | Sends a public URL to Jina Reader; never automatic and rejects local/private targets. |
+| `--use-jina` | Disabled | Sends a public URL to Jina Reader; never automatic and uses the same credentials, DNS, and public-address checks as local URL conversion. |
 | `-h`, `--help` | Disabled | Print parser help and exit. |
 
 Example profile experiment:
