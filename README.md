@@ -630,6 +630,22 @@ The generation adapter sends the grounding policy through Ollama's `system` fiel
 responses whose `done_reason` is not `stop`. A `length` termination is a typed signal used by the
 hierarchical split/reduction path rather than malformed JSON being accepted.
 
+Generation requires the pinned local NLI checkpoint; there is no unverified fallback:
+
+```bash
+python -m pip install -e '.[generation]'
+hf download tasksource/deberta-small-long-nli \
+  --revision 9a77395d4d3751be9e2a69c4ae318491d9b3fffb
+```
+
+Each source analysis returns atomic `claim` + exact contiguous `evidence_quote` pairs. The
+pipeline rejects non-contiguous quotes, verifies quote-to-claim entailment, discards rejected
+claims, and assigns the surviving facts IDs. If none survive, generation abstains without
+citations. Synthesis returns answer units bound to those fact IDs plus an exact list of unused
+IDs; every final unit is verified again against its original evidence. Consequently,
+`source_ids` and `sources` represent only evidence actually used in the answer, while metrics
+report extracted, accepted, rejected, and used fact counts.
+
 ```bash
 raglab-generate "What causes fault E17, and what action resolves it?" \
   --collection greenhouse-manuals
@@ -651,9 +667,10 @@ raglab-generate "Summarize the recovery procedure" \
 
 ## `03_generation.ipynb`
 
-This 10–15 minute lab follows three checkpoints: create grounded evidence, generate a validated
-structured answer, and prove that an invented source ID fails closed. A deterministic model adapter
-drives the real `GenerationPipeline`, so the main path needs neither Ollama nor PostgreSQL.
+This 10–15 minute lab follows three checkpoints: create typed evidence, verify an exact-quote
+claim and evidence-bound answer unit, then reject an invented policy and abstain without citations.
+A deterministic verifier drives the real `GenerationPipeline`, so the main path needs neither the
+NLI checkpoint, Ollama, nor PostgreSQL.
 
 ```bash
 jupyter execute notebooks/03_generation.ipynb \
@@ -663,8 +680,8 @@ jupyter execute notebooks/03_generation.ipynb \
 The optional appendix directs live local generation, source-shortfall experiments, and
 hierarchical synthesis to `raglab-generate` after a compatible collection has been indexed.
 
-The service-backed CLI output includes the answer, abstention flag, strategy, citations, and full
-retrieved evidence.
+The service-backed CLI output includes the answer, abstention flag, strategy, used-only citations,
+full retrieved evidence, and fact lifecycle metrics.
 
 # Chapter 4 — Reproducible RAG evaluation
 
