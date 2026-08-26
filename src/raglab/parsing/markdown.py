@@ -50,10 +50,15 @@ class MarkdownParser:
             elif token.map is not None and token.level == 0 and token.nesting == 0:
                 blocks.append(self._block(BlockKind.OTHER, token, lines, tuple(headings)))
             index += 1
+        parsed_blocks = tuple(self._deduplicate(blocks))
+        if not parsed_blocks:
+            raise ParsingError(
+                f"Markdown from {document.source_uri} produced no non-empty blocks"
+            )
         return ParsedMarkdown(
             source_uri=document.source_uri,
             title=title or document.title,
-            blocks=tuple(self._deduplicate(blocks)),
+            blocks=parsed_blocks,
             markdown=document.markdown,
         )
 

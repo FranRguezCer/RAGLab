@@ -18,6 +18,10 @@ class ParsingError(RagLabError):
     pass
 
 
+class ChunkingError(RagLabError):
+    pass
+
+
 class EmbeddingError(RagLabError):
     pass
 

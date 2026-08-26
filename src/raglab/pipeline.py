@@ -16,6 +16,7 @@ from raglab.contracts import (
 )
 from raglab.conversion import Converter
 from raglab.embeddings import OllamaEmbeddingProvider
+from raglab.errors import ChunkingError
 from raglab.parsing import MarkdownParser
 from raglab.storage import PostgresRepository
 
@@ -71,6 +72,13 @@ class IngestionPipeline:
     ) -> IngestionReport:
         converted = self.converter.convert(source, use_jina=use_jina)
         fingerprint = self._fingerprint(converted, collection)
+        parsed = self.parser.parse(converted)
+        stored_document = replace(converted, title=parsed.title)
+        chunks = self.chunker.chunk(parsed)
+        if not chunks:
+            raise ChunkingError(
+                f"Parsed Markdown from {parsed.source_uri} produced no searchable chunks"
+            )
         current_id = self.repository.current_document_id(
             collection,
             converted.source_uri,
@@ -89,9 +97,6 @@ class IngestionPipeline:
                 provenance_status=converted.provenance_status,
                 provenance_warnings=converted.provenance_warnings,
             )
-        parsed = self.parser.parse(converted)
-        stored_document = replace(converted, title=parsed.title)
-        chunks = self.chunker.chunk(parsed)
         vectors = self.embeddings.embed_documents([item.embedding_text for item in chunks])
         if len(vectors) != len(chunks):
             raise ValueError("Embedding provider returned a different number of vectors")

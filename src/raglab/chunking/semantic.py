@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Protocol
 
 from raglab.contracts import BlockKind, Chunk, MarkdownBlock, ParsedMarkdown
+from raglab.errors import ChunkingError
 
 _MIN_HEADING_DISTANCE_SAMPLES = 3
 
@@ -131,7 +132,9 @@ class SemanticChunker:
     def chunk(self, document: ParsedMarkdown) -> list[Chunk]:
         units = [unit for block in document.blocks for unit in self._split_block(block)]
         if not units:
-            return []
+            raise ChunkingError(
+                f"Parsed Markdown from {document.source_uri} produced no searchable chunks"
+            )
         distances = self._distances(units)
         threshold = (
             _percentile(distances, self.config.semantic_percentile)
@@ -161,10 +164,15 @@ class SemanticChunker:
         if current:
             groups.append(_Group(tuple(current), boundary))
         groups = self._merge_small(groups)
-        return [
+        chunks = [
             self._to_chunk(index, group.units, document.title)
             for index, group in enumerate(groups)
         ]
+        if not chunks:
+            raise ChunkingError(
+                f"Parsed Markdown from {document.source_uri} produced no searchable chunks"
+            )
+        return chunks
 
     def _split_block(self, block: MarkdownBlock) -> list[_Unit]:
         if block.kind is BlockKind.HEADING:

@@ -9,6 +9,7 @@ import raglab.pipeline as pipeline_module
 from raglab import CollectionConfig, LineProvenance, ProvenanceStatus, SourceInput
 from raglab.chunking import ChunkingConfig, SemanticChunker
 from raglab.conversion import Converter
+from raglab.errors import ChunkingError
 from raglab.parsing import MarkdownParser
 from raglab.pipeline import IngestionPipeline
 
@@ -60,6 +61,51 @@ def test_pipeline_embeds_before_storage_and_reports_idempotency() -> None:
     assert repository.calls[0][1].title == "Title"
     assert first.provenance_status is ProvenanceStatus.COMPLETE
     assert first.provenance_warnings == ()
+
+
+def test_pipeline_rejects_zero_chunks_before_embeddings_or_any_repository_call() -> None:
+    class EmptyChunker(SemanticChunker):
+        def chunk(self, document):
+            return []
+
+    class RecordingEmbeddings(FakeEmbeddings):
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
+            self.calls += 1
+            return super().embed_documents(texts)
+
+    class RecordingRepository:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def current_document_id(self, config, source_uri, content_hash, fingerprint):
+            self.calls.append("current_document_id")
+            return None
+
+        def store(self, config, document, chunks, fingerprint):
+            self.calls.append("store")
+            return "document-id", False
+
+    embeddings = RecordingEmbeddings()
+    repository = RecordingRepository()
+    pipeline = IngestionPipeline(
+        converter=Converter(),
+        parser=MarkdownParser(),
+        chunker=EmptyChunker(),
+        embeddings=embeddings,
+        repository=repository,
+    )
+
+    with pytest.raises(ChunkingError, match="no searchable chunks"):
+        pipeline.ingest(
+            SourceInput.text("# Title\n\nUseful content."),
+            CollectionConfig("test", dimension=2),
+        )
+
+    assert embeddings.calls == 0
+    assert repository.calls == []
 
 
 def test_pipeline_v4_replaces_a_v3_source_without_duplication(

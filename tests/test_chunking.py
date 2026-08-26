@@ -6,6 +6,8 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock, patch
 
+import pytest
+
 from raglab.chunking import (
     ChunkingConfig,
     SemanticChunker,
@@ -13,6 +15,7 @@ from raglab.chunking import (
     TransformersTokenCounter,
 )
 from raglab.contracts import BlockKind, MarkdownBlock, ParsedMarkdown
+from raglab.errors import ChunkingError
 
 
 class TopicEmbeddings:
@@ -122,6 +125,18 @@ def test_structural_mode_does_not_create_synthetic_semantic_boundaries() -> None
 
     assert len(chunks) == 1
     assert chunker.last_threshold == float("inf")
+
+
+def test_heading_only_document_is_not_searchable() -> None:
+    chunker = SemanticChunker(token_counter=SimpleTokenCounter())
+
+    with pytest.raises(ChunkingError, match="no searchable chunks"):
+        chunker.chunk(
+            parsed(
+                MarkdownBlock(BlockKind.HEADING, "# Title", 1, 1, ("Title",)),
+                MarkdownBlock(BlockKind.HEADING, "## Section", 3, 3, ("Title", "Section")),
+            )
+        )
 
 
 def test_heading_change_is_a_hard_boundary_below_minimum() -> None:
@@ -269,7 +284,5 @@ def test_large_code_block_keeps_valid_fences() -> None:
 
 
 def test_invalid_configuration_is_rejected() -> None:
-    import pytest
-
     with pytest.raises(ValueError):
         ChunkingConfig(target_tokens=10, min_tokens=20, max_tokens=30)

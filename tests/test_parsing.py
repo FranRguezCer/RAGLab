@@ -1,4 +1,7 @@
+import pytest
+
 from raglab.contracts import BlockKind, ConvertedDocument
+from raglab.errors import ParsingError
 from raglab.parsing import MarkdownParser
 
 
@@ -41,3 +44,22 @@ def test_nested_paragraphs_are_not_duplicated() -> None:
     parsed = MarkdownParser().parse(document("- first\n  continued\n- second"))
     assert len(parsed.blocks) == 1
     assert parsed.blocks[0].kind is BlockKind.LIST
+
+
+def test_parser_rejects_markdown_without_nonempty_blocks() -> None:
+    with pytest.raises(ParsingError, match="no non-empty blocks"):
+        MarkdownParser().parse(document(" \n\t"))
+
+
+def test_heading_only_markdown_remains_valid_parsed_markdown() -> None:
+    parsed = MarkdownParser().parse(document("# Title\n\n## Section"))
+
+    assert parsed.title == "Title"
+    assert [block.kind for block in parsed.blocks] == [BlockKind.HEADING, BlockKind.HEADING]
+
+
+def test_heading_with_body_produces_structural_and_searchable_blocks() -> None:
+    parsed = MarkdownParser().parse(document("# Title\n\nUseful body."))
+
+    assert [block.kind for block in parsed.blocks] == [BlockKind.HEADING, BlockKind.PARAGRAPH]
+    assert parsed.blocks[1].content == "Useful body."
