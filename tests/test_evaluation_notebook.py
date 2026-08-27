@@ -26,6 +26,11 @@ NOTEBOOKS = {
         "HermeticEvaluationExecutor",
         ".promote(",
     ),
+    "05_generation_evaluation_from_first_principles.ipynb": (
+        "GenerationCase",
+        "GenerationOutput",
+        "evaluate_generation",
+    ),
 }
 
 
