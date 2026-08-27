@@ -1,4 +1,4 @@
-"""Pinned, local-only NLI primitives shared by evaluation and generation."""
+"""Pinned, local-only NLI primitives for verified generation."""
 
 from __future__ import annotations
 

@@ -111,10 +111,8 @@ def test_migration_idempotency_view_and_search() -> None:
     assert repository.current_document_id(
         config, source_uri, document.content_hash, "fingerprint"
     ) is None
-    assert repository.evaluation_chunks(config.name) == [
-        (source_uri, "changed one", 2),
-        (source_uri, "changed two", 2),
-    ]
+    replacement_results = repository.search(config.name, vector, exact=True, limit=2)
+    assert {result.content for result in replacement_results} == {"changed one", "changed two"}
     assert repository.collection_stats(config.name) == {
         "name": config.name,
         "model": config.model,

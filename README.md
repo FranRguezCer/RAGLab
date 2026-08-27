@@ -3,12 +3,11 @@
 RAGLab is a local-first, inspectable laboratory for learning **Retrieval-Augmented Generation
 (RAG)** from first principles. RAG retrieves source evidence before a language model answers,
 reducing reliance on the model's internal memory and making citations possible. This repository
-teaches the four stages that determine whether an answer is trustworthy:
+teaches the three stages that determine whether an answer is trustworthy:
 
-1. **ingestion and indexing** — convert sources into faithful, searchable units; and
+1. **ingestion and indexing** — convert sources into faithful, searchable units;
 2. **hybrid retrieval** — combine semantic and lexical search, then refine the evidence; and
-3. **strict generation** — answer only from retrieved evidence and validate every citation; and
-4. **evaluation** — measure ingestion, retrieval, and generation before accepting a change.
+3. **strict generation** — answer only from retrieved evidence and validate every citation.
 
 The components remain explicit. There is no LangChain or LlamaIndex layer hiding conversion,
 chunking, ranking, generation, SQL, or failure modes. Ollama runs embeddings, optional query
@@ -27,9 +26,7 @@ Jina Reader is available only as an explicit opt-in for public URLs.
 | 5 | `notebooks/02_retrieval.ipynb` | Compare semantic and lexical rankings, fuse them, and inspect the evidence |
 | 6 | [Chapter 3](#chapter-3--strict-rag-generation) | Generate structured, grounded answers without dropping evidence |
 | 7 | `notebooks/03_generation.ipynb` | Generate structured source IDs and prove that an invented ID fails closed |
-| 8 | [Chapter 4](#chapter-4--reproducible-rag-evaluation) | Run, inspect, compare, and promote evaluation results |
-| 9 | `notebooks/04_rag_evaluation.ipynb` | Run a hermetic evaluation, compare it, and promote deliberately |
-| 10 | [Appendix A](#appendix-a--test-strategy-and-suite) | Prove each system boundary |
+| 8 | [Appendix A](#appendix-a--test-strategy-and-suite) | Prove each system boundary |
 
 The tracked fictional **Aster Greenhouse Controller Manual** provides a controlled corpus with
 known boundaries and answer anchors. For a real-world example, search arXiv for the well-known
@@ -57,9 +54,6 @@ flowchart LR
     SINGLE --> VALIDATE["Strict source-ID validation"]
     HIER --> VALIDATE
     VALIDATE --> ANSWER["JSON answer + sources + original retrieval"]
-    ANSWER --> EVAL["Evaluate ingestion + retrieval + generation"]
-    EVAL --> DECIDE{"Promote candidate?"}
-    DECIDE -. "change and rerun" .-> CHUNK
 ```
 
 An **AST (Abstract Syntax Tree)** represents Markdown as typed blocks such as headings,
@@ -140,7 +134,7 @@ ollama pull qwen3:4b
 Run `ollama serve` in another terminal if Ollama is not already a system service. Compose exposes
 PostgreSQL only at `127.0.0.1:5432`.
 
-The four CLI commands automatically load the nearest `.env` from the current directory upward.
+The three CLI commands automatically load the nearest `.env` from the current directory upward.
 Explicit CLI flags take priority over exported environment variables, which take priority over
 `.env`; internal defaults remain available when no `.env` exists. Docker Compose reads the same
 file. If you change `POSTGRES_DB`, `POSTGRES_USER`, or `POSTGRES_PASSWORD`, update the credentials
@@ -158,7 +152,6 @@ raglab-retrieve "What causes fault E17?" \
 raglab-generate "What causes fault E17, and how should it be resolved?" \
   --collection greenhouse-manuals
 
-raglab-evaluate run --profile core
 ```
 
 After pulling a revision that adds or changes any `raglab-*` command, refresh the existing
@@ -683,250 +676,6 @@ hierarchical synthesis to `raglab-generate` after a compatible collection has be
 The service-backed CLI output includes the answer, abstention flag, strategy, used-only citations,
 full retrieved evidence, and fact lifecycle metrics.
 
-# Chapter 4 — Reproducible RAG evaluation
-
-Evaluation closes the loop: **run → inspect → promote**. A candidate is evidence, not a new
-baseline. Inspect its hard failures, per-case results, and corpus identity before explicitly
-promoting it.
-
-## Quick path
-
-```bash
-# 1. Rebuild the protected core collection and create a candidate.
-raglab-evaluate run --profile core
-
-# The compact JSON printed above includes run_id and both artifact paths.
-RUN_JSON=artifacts/evaluation/20260820T123456.000000Z.json
-
-# 2. Inspect the JSON for machines and the Markdown summary for humans.
-cat "${RUN_JSON%.json}.md"
-
-# 3. Promote only after the candidate is understood and accepted.
-raglab-evaluate baseline promote "$RUN_JSON"
-```
-
-After a code or configuration change, run the profile again and compare it with the approved
-baseline:
-
-```bash
-raglab-evaluate run --profile core
-CANDIDATE=artifacts/evaluation/20260820T133000.000000Z.json
-raglab-evaluate compare "$CANDIDATE" \
-  --baseline artifacts/evaluation/baseline.json
-```
-
-The comparison reports `improved`, `regressed`, `mixed`, or `no_clear_change` across independent
-quality axes. It deliberately does not hide tradeoffs inside one weighted score.
-
-## What an evaluation index means
-
-Here, an **index** means the searchable evaluation corpus: its source documents, chunks,
-embeddings, and PostgreSQL search structures as one versioned retrieval input. A normal core run
-reconstructs dedicated collections whose names start with `raglab-eval-`, so ingestion and
-chunking changes are measured too. Personal collections are outside that protected namespace and
-are never reset by the evaluator.
-
-This is NOT PostgreSQL `REINDEX`. `REINDEX` rebuilds a database index structure from rows that
-already exist; it does not reconvert sources, rechunk documents, regenerate embeddings, or change
-the evaluation corpus. Use `--reuse-index` only when isolating a downstream retrieval or
-generation change:
-
-```bash
-raglab-evaluate run --profile core --reuse-index
-```
-
-A reused-index run is marked partial and cannot be promoted, because it did not verify the whole
-pipeline.
-
-## Profiles
-
-| Profile | Purpose | External requirements |
-| ------- | ------- | --------------------- |
-| `core` | Authoritative, reproducible benchmark over tracked fixtures; judge disabled by default | PostgreSQL, Ollama, and BGE |
-| `live` | Optional reality check over Attention and one source from each Raspberry Pi domain | Core services, an absolute PDF path, and network access |
-
-The core manifest uses schema v3. Each required fact has a stable ID, one or more
-`evidence_anchors` for retrieval, deterministic `answer_variants` for lexical grading, and one
-canonical `semantic_claim`. Lexical matching remains the first positive check, while every
-parseable, non-abstaining answer is eligible for bounded semantic grading: NLI can rescue lexical
-misses or veto lexical hits that confidently contradict the claim. The independent,
-revision-pinned DeBERTa NLI model runs on CPU in batches of at most eight and rejects pairs over
-512 tokens rather than truncating them. The
-manifest also fixes semantic percentile `85`, four Aster questions and chunk controls, three short
-technical sources, distractor and abstention cases, multi-evidence retrieval, and two multi-turn
-cases. Each case runs approximate and exact retrieval once each, then generates three times. The
-core without a judge is designed to finish in less than 15 minutes.
-
-The live profile compares domain-specific Raspberry Pi collections with an aggregate collection.
-It hashes every source and rejects a changed live source instead of pretending it is comparable:
-
-```bash
-curl -L https://arxiv.org/pdf/1706.03762 -o attention.pdf
-export RAGLAB_ATTENTION_PDF="$(realpath attention.pdf)"
-raglab-evaluate run --profile live
-```
-
-`RAGLAB_ATTENTION_PDF` must resolve to an absolute local path. Live inputs are mutable by nature;
-their recorded hashes are part of the evidence.
-
-## Read the result by axis
-
-| Boundary | Recorded evidence |
-| -------- | ----------------- |
-| Ingestion | Named must-separate and must-keep checks, separate cohesion/separation rates, document/chunk counts, token distribution, latency |
-| Retrieval | Evidence Hit@1/3/5, Recall@5 and MRR; source metrics and bounded nDCG@5 as diagnostics; exact-versus-HNSW agreement; latency |
-| Generation | Contract, lexical/semantic/final facts by ID, abstention, and citation checks; rescue, unresolved, and contradiction-veto diagnostics; fail-closed pass rate; stability across 3 runs; tokens, calls, latency |
-| Operation | Hard and advisory errors plus p50/p95 retrieval and generation latency |
-
-The quality metrics answer different questions:
-
-- **Hit@K** is `1` when at least one required fact is covered in the first K results, otherwise `0`.
-- **Recall@5** is the fraction of all required facts covered in the first five results.
-- **MRR** is the reciprocal rank of the first result covering required evidence; rank 1 scores
-  `1`, rank 2 scores `0.5`, and no relevant result scores `0`.
-- **Source nDCG@5** is diagnostic. It counts each relevant source once, rewards earlier ranks, and
-  is always between `0` and `1`.
-- **Generation pass rate** remains fail-closed: a repetition passes only when its contract, facts,
-  abstention, and citation checks pass. Component rates show which boundary failed. Individual
-  checks use `true`, `false`, or `null`; `null` means an invalid contract made that check
-  impossible to evaluate, not that the check failed independently.
-- **Ingestion separation/cohesion rates** report must-separate and must-keep boundaries
-  independently. Each check records its ID, type, reason, result, and stable chunk references.
-
-Cases without required facts, including abstention cases, record evidence retrieval metrics as
-`null` and do not inflate the summary. Each retrieval rank persists the covered fact IDs and a
-stable chunk reference such as `aster-manual:3-4`. Approximate-versus-exact agreement uses those
-references rather than ephemeral database UUIDs.
-
-Ground truth names evidence with versioned `source_id` values and normalized text anchors, never
-ephemeral PostgreSQL UUIDs. Run schema v5 fingerprints the complete benchmark definition:
-profile, cases, questions, history, abstention rules, expected sources, fact expectations, chunk
-checks, and configuration. Comparison and promotion require the same definition fingerprint;
-v4 run artifacts are intentionally incompatible. Latency is shown only when hardware
-fingerprints match.
-
-Hard failures cover objective contract breaches such as missing expected evidence or failed
-fact, abstention, or citation checks. A completed model response that violates JSON, fact,
-abstention, or citation rules is evaluation evidence: the failed repetition retains its raw
-output and available parsed fields, the benchmark continues through every case, and the run is
-persisted with `status: complete`. The CLI still exits with status `1` and promotion remains
-blocked because the completed run contains hard quality failures.
-
-Infrastructure failures are different. Network, HTTP, collection, configuration, and context
-failures abort execution, persist a run with `status: failed`, and produce the
-`raglab-evaluate: error:` diagnostic. They are not converted into low quality scores because the
-benchmark did not finish. Numeric deltas remain descriptive until tolerances are calibrated. An
-optional LLM judge is an `authority: none` shadow: it runs after authoritative answers are saved
-and the generator is unloaded, and it never changes verdicts. Judge failure or OOM does not
-invalidate the deterministic core. The judge model must differ from the generation model.
-
-```bash
-raglab-evaluate run --profile core --judge-model <different-model>
-```
-
-RAGLab does not install or pin a second judge model in this version.
-
-Semantic grading uses the pinned local-only Tasksource document-NLI checkpoint. The locked v2
-fixture mirrors production routing with 128 calibration rows and an immutable 112-row holdout.
-Calibration derives independent entailment and contradiction thresholds from calibration only.
-Activation requires zero false promotions and vetoes, all lexical contradictions vetoed, at least
-80% semantic-rescue recall in both splits, and the frozen 18-answer regression to produce exactly
-12 rescues and six rejections. Lexical hits remain valid unless high-confidence contradiction
-vetoes them; every unscorable NLI pair fails closed:
-
-```bash
-python -m pip install -e '.[evaluation]'
-hf download tasksource/deberta-small-long-nli \
-  --revision 9a77395d4d3751be9e2a69c4ae318491d9b3fffb
-raglab-evaluate calibrate-semantic --profile core
-```
-
-The download is an explicit setup step. Evaluation itself uses the pinned revision from the local
-Hugging Face cache with network access disabled and fails closed when that snapshot is missing.
-
-## Baseline rules and CLI reference
-
-A baseline is an explicitly approved run, not merely the previous run. Promotion accepts only a
-complete, full run from a clean Git worktree with no hard failures.
-
-The repository does **not** distribute a measured baseline or claim benchmark scores. It provides
-the manifests, fixtures, metric implementations, and commands needed to produce results on your
-own models and hardware. Create the first baseline by running the core profile, inspecting both
-artifacts, and then promoting that exact run:
-
-```bash
-raglab-evaluate run --profile core
-RUN_JSON=artifacts/evaluation/<run_id>.json
-cat "${RUN_JSON%.json}.md"
-raglab-evaluate baseline promote "$RUN_JSON"
-```
-
-Evaluation run artifacts use schema v5. Packaged manifests use schema v3; external schema-v1 and
-v2 manifests remain readable as lexical-only definitions. Existing v4 run artifacts remain
-available for manual inspection but cannot be compared or promoted. The first v5 baseline must be
-generated, reviewed, and promoted explicitly.
-
-The following comparison is **illustrative only**, not a measured RAGLab result:
-
-| Quality axis | Baseline | Candidate | Delta |
-| ------------ | -------: | --------: | ----: |
-| Ingestion separation | 1.00 | 1.00 | 0.00 |
-| Ingestion cohesion | 1.00 | 1.00 | 0.00 |
-| Retrieval Recall@5 | 0.92 | 1.00 | +0.08 |
-| Retrieval MRR | 0.88 | 0.90 | +0.02 |
-| Generation pass rate | 0.97 | 0.94 | -0.03 |
-
-That candidate is `mixed`: retrieval improved while generation regressed. The evaluator implements
-that verdict today, but only artifacts produced by an actual run are evidence about this project.
-Verdicts use only separation, cohesion, Recall@5, MRR, generation pass, contract, final-fact,
-abstention, and citation rates, where higher is always better. Lexical, semantic-rescue,
-unresolved, and contradiction-veto rates remain descriptive diagnostics with deltas and never
-decide promotion.
-
-| Command | Meaning |
-| ------- | ------- |
-| `raglab-evaluate run --profile core` | Rebuild the core evaluation collection and write versioned JSON and Markdown artifacts. |
-| `raglab-evaluate run --profile core --full-json` | Print the complete run payload instead of the default compact JSON summary. |
-| `raglab-evaluate run --profile live` | Build the mutable-source profile after validating source hashes. |
-| `raglab-evaluate run --profile core --reuse-index` | Skip rebuilding the collection; mark the candidate partial and non-promotable. |
-| `raglab-evaluate run --profile core --judge-model MODEL` | Add non-authoritative judge observations with a model different from the generator. |
-| `raglab-evaluate calibrate-semantic --profile core` | Calibrate pinned CPU NLI rescue against locked calibration and holdout pairs; fail closed if unavailable or unsafe. |
-| `raglab-evaluate compare CANDIDATE [--baseline BASELINE]` | Compare compatible quality axes; default baseline is `artifacts/evaluation/baseline.json`. |
-| `raglab-evaluate baseline promote RUN` | Atomically replace the approved baseline after promotion checks. |
-| global `--artifact-dir PATH` | Write/read artifacts somewhere other than `artifacts/evaluation/`; place it before the subcommand. |
-
-By default, `run` prints compact JSON containing `run_id`, artifact paths, status, quality axes,
-and error counts. The complete payload remains in the JSON artifact; use `--full-json` when a
-caller explicitly needs it on stdout. A completed run with hard quality failures is still
-persisted and exits with status `1`.
-
-Every run artifact records the schema and definition fingerprint, Git commit and dirty state,
-model names, hardware, per-source hashes, results, timings, and errors. The JSON schema is
-exported as `raglab.evaluation.RUN_JSON_SCHEMA`; application integrations can import
-`EvaluationApplication` and optional judges implement `EvaluationJudge`.
-
-## `04_rag_evaluation.ipynb`
-
-This 10–15 minute lab follows three checkpoints: inspect the shared manifest, run a hermetic
-baseline and candidate, then compare and promote deliberately. It imports the same
-`EvaluationApplication` and manifest loader as the CLI, without PostgreSQL, Ollama, or a
-subprocess.
-
-Execute the tracked output-free notebook into `/tmp`:
-
-```bash
-jupyter execute notebooks/04_rag_evaluation.ipynb \
-  --output /tmp/raglab-evaluation-lab.ipynb
-```
-
-The optional appendix leaves the authoritative service-backed run to the CLI:
-
-```bash
-raglab-evaluate run --profile core
-# Opt in only when the complete payload is needed on stdout.
-raglab-evaluate run --profile core --full-json
-```
-
 # Appendix A — Test strategy and suite
 
 The pyramid keeps algorithmic feedback fast and reserves real converters, databases, models, and
@@ -942,8 +691,6 @@ services or opt-in variables are absent.
 | PostgreSQL integration | Migrations, atomic replacement, vectors, filters, BM25, retrieval SQL | Disposable ParadeDB |
 | PDF E2E | PDF → Docling → Ollama → PostgreSQL | PDF, Docling, Ollama, PostgreSQL |
 | Retrieval E2E | Real ANN + BM25 + BGE | ParadeDB, Ollama, BGE model |
-| Evaluation integration | Protected collection reset and isolation from personal collections | Disposable ParadeDB |
-| Evaluation E2E | Minimal native ingestion, retrieval, and generation run | ParadeDB, Ollama, BGE model |
 | Notebooks | Teaching paths remain executable and output-free in Git | None by default; services for live cells |
 
 ```bash
@@ -974,7 +721,6 @@ PostgreSQL integration:
 docker compose up -d --wait
 export RAGLAB_TEST_DSN='postgresql://raglab:raglab@127.0.0.1:5432/raglab'
 pytest -m integration tests/integration/test_postgres.py tests/integration/test_retrieval.py
-pytest -m integration tests/integration/test_evaluation_postgres.py
 ```
 
 PDF E2E:
@@ -993,14 +739,6 @@ export RAGLAB_TEST_DSN='postgresql://raglab:raglab@127.0.0.1:5432/raglab'
 pytest -m e2e tests/e2e/test_hybrid_retrieval.py
 ```
 
-RAG evaluation E2E:
-
-```bash
-export RAGLAB_RUN_EVALUATION_E2E=1
-export RAGLAB_TEST_DSN='postgresql://raglab:raglab@127.0.0.1:5432/raglab'
-pytest -m e2e tests/e2e/test_rag_evaluation.py
-```
-
 Always write executed notebooks outside the repository:
 
 ```bash
@@ -1010,8 +748,6 @@ jupyter execute notebooks/02_retrieval.ipynb \
   --output /tmp/raglab-retrieval.ipynb
 jupyter execute notebooks/03_generation.ipynb \
   --output /tmp/raglab-generation.ipynb
-jupyter execute notebooks/04_rag_evaluation.ipynb \
-  --output /tmp/raglab-evaluation.ipynb
 jupyter execute notebooks/benchmark_ingestion_hyperparameters.ipynb \
   --output /tmp/raglab-benchmark.ipynb
 ```
@@ -1033,9 +769,7 @@ collections. Never aim destructive fixtures at production.
 | BGE reranking | `tests/test_retrieval_reranking.py` |
 | Retrieval orchestration | `tests/test_retrieval_pipeline.py`, `tests/e2e/test_hybrid_retrieval.py` |
 | Generation, citations, fallback, and CLI | `tests/test_generation.py`, `tests/test_generation_ollama.py`, `tests/test_generation_cli.py` |
-| Evaluation contracts, metrics, application, and CLI | `tests/test_evaluation.py`, `tests/test_evaluation_cli.py` |
-| Evaluation storage isolation and native E2E | `tests/integration/test_evaluation_postgres.py`, `tests/e2e/test_rag_evaluation.py` |
-| Output-free executable notebooks | `tests/test_evaluation_notebook.py` |
+| Output-free executable notebooks | `tests/test_notebooks.py` |
 
 # Appendix B — BGE reranker OOM incident
 
@@ -1130,6 +864,5 @@ docker compose exec postgres psql -U raglab -d raglab -c \
 | 01 | `01_ingestion_and_indexing.ipynb` | Implemented |
 | 02 | `02_retrieval.ipynb` | Implemented |
 | 03 | `03_generation.ipynb` | Implemented |
-| 04 | `04_rag_evaluation.ipynb` | Implemented |
 
 Generation consumes `result.content` with `result.citation`, never `embedding_text`.

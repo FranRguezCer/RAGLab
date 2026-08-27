@@ -26,6 +26,6 @@ dist/
 # Jupyter
 .ipynb_checkpoints/
 
-# Generated ingestion artifacts. Controlled samples and evaluation labels stay tracked.
+# Generated ingestion artifacts. Controlled samples and chunk-boundary labels stay tracked.
 artifacts/
 data/generated/

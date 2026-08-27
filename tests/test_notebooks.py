@@ -21,16 +21,6 @@ NOTEBOOKS = {
         "GenerationPipeline",
         "GenerationError",
     ),
-    "04_rag_evaluation.ipynb": (
-        "EvaluationApplication",
-        "HermeticEvaluationExecutor",
-        ".promote(",
-    ),
-    "05_generation_evaluation_from_first_principles.ipynb": (
-        "GenerationCase",
-        "GenerationOutput",
-        "evaluate_generation",
-    ),
 }
 
 
@@ -59,7 +49,6 @@ def test_short_notebook_lab_is_valid_output_free_and_hermetic(
             "OllamaGenerationModel",
             "PostgresRepository",
             "PostgresRetrievalRepository",
-            "LiveEvaluationExecutor",
             "psycopg",
             "subprocess",
         )
@@ -89,7 +78,6 @@ def test_short_notebook_lab_is_valid_output_free_and_hermetic(
     for variable in (
         "RAGLAB_RUN_RETRIEVAL_NOTEBOOK",
         "RAGLAB_RUN_GENERATION_NOTEBOOK",
-        "RAGLAB_RUN_EVALUATION_NOTEBOOK",
         "RAGLAB_RUN_TENANT_DEMO",
         "RAGLAB_PDF",
     ):
