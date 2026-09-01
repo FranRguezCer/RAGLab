@@ -82,6 +82,9 @@ class GenerationMetrics:
     facts_accepted: int = 0
     facts_rejected: int = 0
     facts_used: int = 0
+    selection_calls: int | None = None
+    facts_invalid_quotes: int | None = None
+    facts_nli_rejected: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

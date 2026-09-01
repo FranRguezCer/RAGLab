@@ -1,0 +1,120 @@
+{
+  "schema_version": 1,
+  "dataset_id": "aster-greenhouse-controller-v1",
+  "cases": [
+    {
+      "id": "wet-bed-schedule",
+      "question": "Can a scheduled irrigation window water a bed that is already too wet?",
+      "expected_facts": [
+        {
+          "id": "moisture-before-time",
+          "text": "The scheduler evaluates moisture before elapsed time.",
+          "answer_variants": [
+            "scheduler evaluates moisture before elapsed time",
+            "moisture limits take priority"
+          ],
+          "evidence_source_ids": [
+            "aster-greenhouse-controller-manual-md/aster-greenhouse-controller-operator-manual/3-climate-targets-and-irrigation-rules/irrigation-schedule",
+            "aster-greenhouse-controller-manual-md/aster-greenhouse-controller-operator-manual/6-maintenance-and-recovery/frequently-asked-questions"
+          ]
+        },
+        {
+          "id": "wet-bed-skipped",
+          "text": "An already wet bed is not watered and records SKIPPED_WET_BED.",
+          "answer_variants": [
+            "window closes without opening a valve and the log records skipped wet bed",
+            "controller records skipped wet bed",
+            "SKIPPED_WET_BED"
+          ],
+          "evidence_source_ids": [
+            "aster-greenhouse-controller-manual-md/aster-greenhouse-controller-operator-manual/3-climate-targets-and-irrigation-rules/irrigation-schedule",
+            "aster-greenhouse-controller-manual-md/aster-greenhouse-controller-operator-manual/6-maintenance-and-recovery/frequently-asked-questions"
+          ]
+        }
+      ],
+      "forbidden_phrases": ["watering is forced", "valve opens anyway"]
+    },
+    {
+      "id": "low-flow-e17",
+      "question": "What does the controller do when irrigation flow remains below 1.2 L/min for eight seconds?",
+      "expected_facts": [
+        {
+          "id": "close-valve",
+          "text": "The controller closes the active valve.",
+          "answer_variants": ["controller closes the valve", "close the active valve"],
+          "evidence_source_ids": [
+            "aster-greenhouse-controller-manual-md/aster-greenhouse-controller-operator-manual/3-climate-targets-and-irrigation-rules/irrigation-schedule",
+            "aster-greenhouse-controller-manual-md/aster-greenhouse-controller-operator-manual/5-fault-diagnosis"
+          ]
+        },
+        {
+          "id": "raise-e17",
+          "text": "The controller raises fault E17.",
+          "answer_variants": ["raises e17", "raise fault e17"],
+          "evidence_source_ids": [
+            "aster-greenhouse-controller-manual-md/aster-greenhouse-controller-operator-manual/3-climate-targets-and-irrigation-rules/irrigation-schedule",
+            "aster-greenhouse-controller-manual-md/aster-greenhouse-controller-operator-manual/5-fault-diagnosis"
+          ]
+        }
+      ],
+      "forbidden_phrases": ["extends the window", "keeps the valve open"]
+    },
+    {
+      "id": "isolation-e41",
+      "question": "What should an operator do if the ISOLATED banner does not appear within five seconds?",
+      "expected_facts": [
+        {
+          "id": "stop-and-record",
+          "text": "Stop the procedure and record fault E41.",
+          "answer_variants": ["stop the procedure and record fault e41", "stop and record e41"],
+          "evidence_source_ids": [
+            "aster-greenhouse-controller-manual-md/aster-greenhouse-controller-operator-manual/1-system-overview-and-safety/safety-boundaries"
+          ]
+        },
+        {
+          "id": "supervisor-inspection",
+          "text": "A supervisor must inspect the interlock before returning to Assist or Automatic mode.",
+          "answer_variants": [
+            "supervisor must inspect the interlock",
+            "supervisor inspection of the interlock is required"
+          ],
+          "evidence_source_ids": [
+            "aster-greenhouse-controller-manual-md/aster-greenhouse-controller-operator-manual/1-system-overview-and-safety/safety-boundaries"
+          ]
+        }
+      ],
+      "forbidden_phrases": ["bypass the isolation alarm", "continue the procedure"]
+    },
+    {
+      "id": "restore-backup",
+      "question": "What does restoring an Aster configuration backup replace, and what remains unchanged?",
+      "expected_facts": [
+        {
+          "id": "restore-replaces-configuration",
+          "text": "A restore replaces device identities, zone assignments, schedules, and automation rules.",
+          "answer_variants": [
+            "replaces device identities zone assignments schedules and automation rules",
+            "device identities zone assignments schedules and rule settings"
+          ],
+          "evidence_source_ids": [
+            "aster-greenhouse-controller-manual-md/aster-greenhouse-controller-operator-manual/4-daily-operation-and-handover-notes/operator-handover-notes",
+            "aster-greenhouse-controller-manual-md/aster-greenhouse-controller-operator-manual/6-maintenance-and-recovery/frequently-asked-questions"
+          ]
+        },
+        {
+          "id": "restore-preserves-firmware-history",
+          "text": "Firmware and historical audit events remain unchanged.",
+          "answer_variants": [
+            "firmware and historical audit events remain unchanged",
+            "restore never changes firmware"
+          ],
+          "evidence_source_ids": [
+            "aster-greenhouse-controller-manual-md/aster-greenhouse-controller-operator-manual/4-daily-operation-and-handover-notes/operator-handover-notes",
+            "aster-greenhouse-controller-manual-md/aster-greenhouse-controller-operator-manual/6-maintenance-and-recovery/frequently-asked-questions"
+          ]
+        }
+      ],
+      "forbidden_phrases": ["updates firmware", "erases historical audit events"]
+    }
+  ]
+}

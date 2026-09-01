@@ -3,11 +3,12 @@
 RAGLab is a local-first, inspectable laboratory for learning **Retrieval-Augmented Generation
 (RAG)** from first principles. RAG retrieves source evidence before a language model answers,
 reducing reliance on the model's internal memory and making citations possible. This repository
-teaches the three stages that determine whether an answer is trustworthy:
+teaches the stages that determine whether an answer is trustworthy:
 
 1. **ingestion and indexing** — convert sources into faithful, searchable units;
 2. **hybrid retrieval** — combine semantic and lexical search, then refine the evidence; and
-3. **strict generation** — answer only from retrieved evidence and validate every citation.
+3. **strict generation** — answer only from retrieved evidence and validate every citation; and
+4. **evaluation** — measure retrieval and generation separately against visible expectations.
 
 The components remain explicit. There is no LangChain or LlamaIndex layer hiding conversion,
 chunking, ranking, generation, SQL, or failure modes. Ollama runs embeddings, optional query
@@ -26,7 +27,9 @@ Jina Reader is available only as an explicit opt-in for public URLs.
 | 5 | `notebooks/02_retrieval.ipynb` | Compare semantic and lexical rankings, fuse them, and inspect the evidence |
 | 6 | [Chapter 3](#chapter-3--strict-rag-generation) | Generate structured, grounded answers without dropping evidence |
 | 7 | `notebooks/03_generation.ipynb` | Generate structured source IDs and prove that an invented ID fails closed |
-| 8 | [Appendix A](#appendix-a--test-strategy-and-suite) | Prove each system boundary |
+| 8 | [Chapter 4](#chapter-4--transparent-rag-evaluation) | Measure retrieval and generation without hiding their failure modes |
+| 9 | `notebooks/04_rag_evaluation.ipynb` | Inspect expected truth, score both stages, and expose a deliberate regression |
+| 10 | [Appendix A](#appendix-a--test-strategy-and-suite) | Prove each system boundary |
 
 The tracked fictional **Aster Greenhouse Controller Manual** provides a controlled corpus with
 known boundaries and answer anchors. For a real-world example, search arXiv for the well-known
@@ -485,18 +488,20 @@ replace the system policy merely by containing instruction-like prose.
 | Contract | Enforced behavior |
 | -------- | ----------------- |
 | Evidence | The model may use only complete `RetrievalResult.content` values. |
-| Structured source IDs | RAGLab derives ordered `source_ids` aliases such as `S1` and `S2` from source-scoped extracted facts. |
+| Structured source IDs | RAGLab derives ordered `source_ids` aliases such as `S1` and `S2` from selected, verified facts. |
 | Resolved sources | `sources` contains the retrieval identity and citation metadata for those IDs in the same order. |
-| Known sources | Each extracted fact inherits the ID of the source analyzed in that call. |
+| Known sources | Each selected fact must name a source included in the same selection batch. |
 | Non-abstaining answer | At least one validated fact is required before final synthesis. |
-| Insufficient evidence | Empty retrieval abstains without calling the LLM; retrieval with no extracted facts abstains after source analysis. |
+| Insufficient evidence | Empty retrieval abstains without calling the LLM; an empty or fully rejected selection abstains without synthesis. |
 
-For non-empty retrieval, the model first returns a bounded `facts` array independently for every
-source. RAGLab attaches each validated fact to that source, then asks the model only for the final
-`answer`. The public `source_ids` tuple is derived from the retained fact lineage; the model never
+For non-empty retrieval, the model first sees the question and the complete ranked sources that
+fit together, then returns `source_id` + `claim` + `evidence_quote` facts. This selector is the
+relevance authority: there is no lexical-overlap filter after it. RAGLab validates the source ID,
+recovers a quote only when whitespace normalization produces one unique original span, and checks
+quote-to-claim entailment with the pinned NLI model. A second model call synthesizes only from the
+verified facts. The public `source_ids` tuple is derived from retained fact lineage; the model never
 declares attribution in the synthesis response. Legacy `[S#]` markers are removed from `answer`
-and never decide attribution. Validation proves traceability; it does not claim that an LLM can
-independently prove the semantic truth of every sentence.
+and never decide attribution.
 
 `sources` is built from the derived tuple and preserves each result's retrieval ID, document ID,
 and full citation metadata. Consumers can inspect compact aliases without losing provenance.
@@ -526,7 +531,12 @@ The response is JSON by default and contains:
   "source_shortfall": false,
   "minimum_sources": 5,
   "source_count": 5,
-  "metrics": {"model_calls": 6, "estimated_prompt_tokens": 1800}
+  "metrics": {
+    "model_calls": 2,
+    "selection_calls": 1,
+    "facts_invalid_quotes": 0,
+    "facts_nli_rejected": 0
+  }
 }
 ```
 
@@ -547,8 +557,8 @@ flowchart TD
     QUERY["One question"] --> RETRIEVE["Typed RetrievalPipeline"]
     RETRIEVE --> CHECK["Validate collection model + dimension"]
     CHECK --> SOURCES["Stable S1..Sn over complete results"]
-    SOURCES --> ANALYZE["Analyze each complete source independently"]
-    ANALYZE --> FACTS["Validate source-linked facts"]
+    SOURCES --> SELECT["Select query-relevant evidence in bounded batches"]
+    SELECT --> FACTS["Validate source IDs, quotes, and NLI"]
     FACTS --> SYNTH["Final structured synthesis"]
     SYNTH --> GUARD["Validate answer JSON"]
     GUARD --> DERIVE["Derive source IDs from fact lineage"]
@@ -556,11 +566,11 @@ flowchart TD
 ```
 
 `single_pass` is reserved for the no-evidence abstention, which makes no model call. Every
-non-empty retrieval follows the hierarchical path: one complete-source extraction call per
-result, then final synthesis from validated facts. If those facts cannot fit, bounded reduction
-rounds compress source-linked groups while preserving the full source-ID lineage. Lack of
-progress, one oversized source or fact, extraction exhaustion, and final synthesis exhaustion
-all fail explicitly. The planner does **not** truncate evidence to force it through.
+non-empty retrieval follows the hierarchical path. The normal path uses one selection call over
+all complete sources and one synthesis call. When the sources do not fit together, greedy batches
+preserve their ranking and process every source; a source that cannot fit alone fails explicitly.
+If verified facts cannot fit synthesis, bounded reduction compresses source-linked groups while
+preserving the full source-ID lineage. The planner never truncates or silently drops evidence.
 
 ## Validated 8 GB local profile
 
@@ -631,13 +641,14 @@ hf download tasksource/deberta-small-long-nli \
   --revision 9a77395d4d3751be9e2a69c4ae318491d9b3fffb
 ```
 
-Each source analysis returns atomic `claim` + exact contiguous `evidence_quote` pairs. The
-pipeline rejects non-contiguous quotes, verifies quote-to-claim entailment, discards rejected
-claims, and assigns the surviving facts IDs. If none survive, generation abstains without
-citations. Synthesis returns answer units bound to those fact IDs plus an exact list of unused
-IDs; every final unit is verified again against its original evidence. Consequently,
-`source_ids` and `sources` represent only evidence actually used in the answer, while metrics
-report extracted, accepted, rejected, and used fact counts.
+Selection returns atomic `source_id` + `claim` + `evidence_quote` facts, with at most two facts per
+source. The pipeline rejects unknown sources and nonexistent or ambiguous quotes, permits only
+unique whitespace-only quote recovery, verifies quote-to-claim entailment, and assigns IDs to the
+surviving facts. If none survive, generation abstains without synthesis or citations. Synthesis
+returns answer units bound to those fact IDs plus an exact list of unused IDs; every final unit is
+verified again against its original evidence. `source_ids` and `sources` therefore represent only
+evidence actually used in the answer. Metrics separate selection calls, invalid quotes, NLI
+rejections, accepted facts, and used facts while `model_calls` remains the total real call count.
 
 ```bash
 raglab-generate "What causes fault E17, and what action resolves it?" \
@@ -675,6 +686,94 @@ hierarchical synthesis to `raglab-generate` after a compatible collection has be
 
 The service-backed CLI output includes the answer, abstention flag, strategy, used-only citations,
 full retrieved evidence, and fact lifecycle metrics.
+
+# Chapter 4 — Transparent RAG evaluation
+
+Evaluation starts with a small, inspectable truth set—not a score whose meaning is hidden. The
+versioned Aster dataset contains four questions, their expected facts and acceptable wording,
+the evidence that should be retrieved, and phrases that must never appear. `raglab.evaluation`
+uses only the Python standard library and keeps retrieval and generation scorecards separate.
+
+## The two scorecards
+
+For the first `k` retrieved results, let `relevant@k` be the expected evidence IDs found in those
+positions and let `relevant` be every expected evidence ID for the case:
+
+```text
+Precision@k = |relevant@k| / k
+Recall@k    = |relevant@k| / |relevant|
+MRR@k       = 1 / position of the first relevant result, or 0 when none appears
+```
+
+Generation checks facts independently of retrieval ranking:
+
+```text
+fact coverage              = expected facts expressed / expected facts
+grounded fact coverage     = expressed facts backed by a valid cited source / expected facts
+citation precision         = valid cited sources / cited sources
+```
+
+Every result also lists found and missing facts, evidence positions, cited sources, forbidden
+phrases, and the numerator and denominator behind each value. Aggregate means are useful for
+orientation, but they never replace per-case traces and there is deliberately no weighted global
+score.
+
+## Run the four controlled cases
+
+`load_cases` validates `data/evaluation/aster_greenhouse_controller_v1.json`. The response
+adapters accept the production `RetrievalResponse` and `GenerationResponse` contracts, while the
+evaluation functions remain deterministic and service-free. `EvaluationApplication` is the
+separate application boundary: it runs every case through a configured `GenerationPipeline` and
+returns the full responses, per-case traces, and the same `EvaluationReport`. The CLI and notebook
+share this boundary instead of rebuilding PostgreSQL and Ollama orchestration themselves.
+
+Run the live application directly from the CLI:
+
+```bash
+raglab-evaluate data/evaluation/aster_greenhouse_controller_v1.json \
+  --collection greenhouse-manuals \
+  --output /tmp/raglab-evaluation.json
+```
+
+Or integrate the same application boundary in Python:
+
+```python
+from raglab.evaluation import load_cases
+from raglab.evaluation_application import create_live_evaluation_application
+
+application = create_live_evaluation_application()
+run = application.run(load_cases("data/evaluation/aster_greenhouse_controller_v1.json"))
+print(run.report.generation_summary)
+```
+
+`build_report` produces a versioned, JSON-serializable report. `compare_reports` shows previous,
+current, and delta values and rejects reports with different case IDs or `top_k` values instead of
+comparing unlike experiments.
+
+The notebook has three checkpoints: define the expected truth, measure a controlled retrieval
+ranking, then measure generation and make a deliberate regression visible. Run those checkpoint
+cells alone for a controlled, service-free lesson. The cell immediately before the live appendix
+explicitly assigns `RAGLAB_RUN_EVALUATION_NOTEBOOK=1`; automated notebook tests neutralize that
+activation cell in their in-memory copy before execution. To run the same four questions against
+an indexed Aster collection through PostgreSQL and Ollama, configure the normal RAGLab environment
+and execute the appendix:
+
+```bash
+RAGLAB_RUN_EVALUATION_NOTEBOOK=1 \
+RAGLAB_EVALUATION_COLLECTION=greenhouse-manuals \
+jupyter execute notebooks/04_rag_evaluation.ipynb \
+  --output /tmp/raglab-evaluation-live.ipynb
+```
+
+## What v1 does not prove
+
+String variants make known facts and regressions explainable, but they do not prove full semantic
+equivalence, writing quality, completeness outside the four cases, or safety in an unseen domain.
+This report is a signal, not a CI gate. The next useful steps are negative and adversarial cases,
+human review, semantic or model-based judges, and end-to-end evaluation under controlled service
+versions. [Ragas](https://docs.ragas.io/en/stable/concepts/metrics/available_metrics/) and
+[DeepEval](https://deepeval.com/docs/metrics-introduction) become worth comparing only when those
+model-based tradeoffs are intentional; v1 avoids adding either framework prematurely.
 
 # Appendix A — Test strategy and suite
 
