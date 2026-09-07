@@ -9,9 +9,10 @@ RUN mkdir -p src/raglab && touch src/raglab/__init__.py \
 
 COPY src ./src
 COPY data ./data
-COPY artifacts ./artifacts
 COPY scripts ./scripts
-RUN pip install --no-cache-dir --no-deps . && chown -R 65532:65532 /app
+RUN mkdir -p artifacts \
+    && pip install --no-cache-dir --no-deps . \
+    && chown -R 65532:65532 /app
 USER 65532:65532
 EXPOSE 8000
 CMD ["uvicorn", "raglab.demo_cli:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
