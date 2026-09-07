@@ -1,0 +1,120 @@
+{
+  "schema_version": 1,
+  "corpus": "raspberry-pi-official-docs",
+  "version": "v1",
+  "collections": [
+    "rpi-computers",
+    "rpi-microcontrollers",
+    "rpi-camera-ai"
+  ],
+  "sources": [
+    {
+      "id": "headless-setup",
+      "path": "sources/computers/headless-setup.md",
+      "sha256": "5c912809e259f8a76879a357f86c4005c8f99e5f21b8535b6f3fed041e9f47de",
+      "collection": "rpi-computers",
+      "metadata": {
+        "original_url": "https://github.com/raspberrypi/documentation/blob/68354487bf8cb195ea215471ccf4964ce71acb56/documentation/asciidoc/computers/getting-started/setting-up.adoc",
+        "upstream_revision": "68354487bf8cb195ea215471ccf4964ce71acb56",
+        "license": "CC-BY-SA-4.0",
+        "attribution": "Raspberry Pi Ltd and documentation contributors"
+      }
+    },
+    {
+      "id": "os-editions",
+      "path": "sources/computers/os-editions.md",
+      "sha256": "95ad622d03c431bafbf9308ee99ce1f928fa67e8d46bd571133b6bd48b9caedf",
+      "collection": "rpi-computers",
+      "metadata": {
+        "original_url": "https://github.com/raspberrypi/documentation/blob/68354487bf8cb195ea215471ccf4964ce71acb56/documentation/asciidoc/computers/os/rpi-os-introduction.adoc",
+        "upstream_revision": "68354487bf8cb195ea215471ccf4964ce71acb56",
+        "license": "CC-BY-SA-4.0",
+        "attribution": "Raspberry Pi Ltd and documentation contributors"
+      }
+    },
+    {
+      "id": "boot-media",
+      "path": "sources/computers/boot-media.md",
+      "sha256": "b1411d3747974e5248352814095855154f3cc84b087f47a5bdaa671a60b84af4",
+      "collection": "rpi-computers",
+      "metadata": {
+        "original_url": "https://github.com/raspberrypi/documentation/blob/68354487bf8cb195ea215471ccf4964ce71acb56/documentation/asciidoc/computers/getting-started/install.adoc",
+        "upstream_revision": "68354487bf8cb195ea215471ccf4964ce71acb56",
+        "license": "CC-BY-SA-4.0",
+        "attribution": "Raspberry Pi Ltd and documentation contributors"
+      }
+    },
+    {
+      "id": "pico-overview",
+      "path": "sources/microcontrollers/pico-overview.md",
+      "sha256": "4727cb2a33f0e1dde02328dc329eaf8ce1daf1201d094e371fea7053088c385f",
+      "collection": "rpi-microcontrollers",
+      "metadata": {
+        "original_url": "https://github.com/raspberrypi/documentation/blob/68354487bf8cb195ea215471ccf4964ce71acb56/documentation/asciidoc/microcontrollers/pico-series/about_pico.adoc",
+        "upstream_revision": "68354487bf8cb195ea215471ccf4964ce71acb56",
+        "license": "CC-BY-SA-4.0",
+        "attribution": "Raspberry Pi Ltd and documentation contributors"
+      }
+    },
+    {
+      "id": "micropython",
+      "path": "sources/microcontrollers/micropython.md",
+      "sha256": "8a089ddbea4b5e7468e4a7eca689bcce969fc25a7df052f3112136b69858394c",
+      "collection": "rpi-microcontrollers",
+      "metadata": {
+        "original_url": "https://github.com/raspberrypi/documentation/blob/68354487bf8cb195ea215471ccf4964ce71acb56/documentation/asciidoc/microcontrollers/micropython.adoc",
+        "upstream_revision": "68354487bf8cb195ea215471ccf4964ce71acb56",
+        "license": "CC-BY-SA-4.0",
+        "attribution": "Raspberry Pi Ltd and documentation contributors"
+      }
+    },
+    {
+      "id": "pico-debugging",
+      "path": "sources/microcontrollers/debugging.md",
+      "sha256": "68834af674d76b60f6018cab3cb1110d603653ddda6ec27098e61746bbe8e6ca",
+      "collection": "rpi-microcontrollers",
+      "metadata": {
+        "original_url": "https://github.com/raspberrypi/documentation/blob/68354487bf8cb195ea215471ccf4964ce71acb56/documentation/asciidoc/microcontrollers/debug-probe/introduction.adoc",
+        "upstream_revision": "68354487bf8cb195ea215471ccf4964ce71acb56",
+        "license": "CC-BY-SA-4.0",
+        "attribution": "Raspberry Pi Ltd and documentation contributors"
+      }
+    },
+    {
+      "id": "ai-camera",
+      "path": "sources/camera-ai/ai-camera.md",
+      "sha256": "ae36a6dc058cf742e7faefae9b068a74bde87a920832f9c475ac17293f34233d",
+      "collection": "rpi-camera-ai",
+      "metadata": {
+        "original_url": "https://github.com/raspberrypi/documentation/blob/68354487bf8cb195ea215471ccf4964ce71acb56/documentation/asciidoc/accessories/ai-camera/details.adoc",
+        "upstream_revision": "68354487bf8cb195ea215471ccf4964ce71acb56",
+        "license": "CC-BY-SA-4.0",
+        "attribution": "Raspberry Pi Ltd and documentation contributors"
+      }
+    },
+    {
+      "id": "camera-installation",
+      "path": "sources/camera-ai/camera-installation.md",
+      "sha256": "52f8ccfc831baa94383f1fdf12f8f902b2a68283cc000758a9cf7cccfa45a29f",
+      "collection": "rpi-camera-ai",
+      "metadata": {
+        "original_url": "https://github.com/raspberrypi/documentation/blob/68354487bf8cb195ea215471ccf4964ce71acb56/documentation/asciidoc/computers/camera_software.adoc",
+        "upstream_revision": "68354487bf8cb195ea215471ccf4964ce71acb56",
+        "license": "CC-BY-SA-4.0",
+        "attribution": "Raspberry Pi Ltd and documentation contributors"
+      }
+    },
+    {
+      "id": "picamera2",
+      "path": "sources/camera-ai/picamera2.md",
+      "sha256": "0e5851c1780a80e67906472ece217f0d2a8ffc34937f3406ae2b7bb2b0efc72f",
+      "collection": "rpi-camera-ai",
+      "metadata": {
+        "original_url": "https://github.com/raspberrypi/picamera2/blob/73ce3b7a27e600abec704a843975f4925f029d0a/README.md",
+        "upstream_revision": "73ce3b7a27e600abec704a843975f4925f029d0a",
+        "license": "BSD-2-Clause",
+        "attribution": "Copyright (c) 2021, Raspberry Pi"
+      }
+    }
+  ]
+}

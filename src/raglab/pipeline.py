@@ -165,8 +165,17 @@ def ingest(
     dsn: str,
     use_jina: bool = False,
     chunk_config: ChunkingConfig | None = None,
+    ollama_base_url: str = "http://127.0.0.1:11434",
+    embedding_num_gpu: int | None = None,
+    keep_alive: str | None = None,
 ) -> IngestionReport:
-    embeddings = OllamaEmbeddingProvider(model=collection.model, dimension=collection.dimension)
+    embeddings = OllamaEmbeddingProvider(
+        model=collection.model,
+        dimension=collection.dimension,
+        base_url=ollama_base_url,
+        num_gpu=embedding_num_gpu,
+        keep_alive=keep_alive,
+    )
     pipeline = IngestionPipeline(
         converter=Converter(),
         parser=MarkdownParser(),
