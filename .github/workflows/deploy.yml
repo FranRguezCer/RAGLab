@@ -1,0 +1,40 @@
+name: Deploy production
+on:
+  workflow_dispatch:
+    inputs:
+      image_digest:
+        description: Published sha256 image digest
+        required: true
+        type: string
+      build_sha:
+        description: Source commit represented by the image
+        required: true
+        type: string
+concurrency: production
+jobs:
+  deploy:
+    environment: production
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          mkdir -p ~/.ssh
+          printf '%s' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
+      - name: Deploy immutable image and roll back on failure
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          IMAGE: ghcr.io/franrguezcer/raglab@${{ inputs.image_digest }}
+          BUILD_SHA: ${{ inputs.build_sha }}
+        run: >-
+          scp compose.production.yaml "$HOST":/srv/raglab/compose.production.yaml &&
+          ssh "$HOST" "cd /srv/raglab &&
+          previous=\$(cat .last-good-image 2>/dev/null || true) &&
+          export RAGLAB_IMAGE='$IMAGE' RAGLAB_BUILD_SHA='$BUILD_SHA' &&
+          docker compose -f compose.production.yaml pull &&
+          if docker compose -f compose.production.yaml up -d --wait &&
+          docker compose -f compose.production.yaml exec -T api python scripts/smoke_demo.py;
+          then printf '%s' '$IMAGE' > .last-good-image;
+          else export RAGLAB_IMAGE=\$previous;
+          docker compose -f compose.production.yaml up -d --wait; exit 1; fi"

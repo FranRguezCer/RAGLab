@@ -1,0 +1,15 @@
+name: CI
+on:
+  pull_request:
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+      - run: pip install -e '.[dev,generation,retrieval,tokenizers]'
+      - run: ruff check src tests
+      - run: mypy src/raglab
+      - run: pytest --cov=raglab --cov-fail-under=85 -m 'not integration and not e2e'
+      - run: docker build -t raglab:test .

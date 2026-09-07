@@ -16,6 +16,21 @@ rewriting, and generation locally; Docling converts complex files locally; Postg
 inspectable artifacts.
 Jina Reader is available only as an explicit opt-in for public URLs.
 
+## 90-second tour
+
+1. Open the deployed page and choose one of the three Raspberry Pi collections.
+2. Run a suggested question with the temporary demo token.
+3. Inspect its citations, retrieved fragments, and hybrid-ranking trace.
+4. Open **Ingestion and release evidence** to see the versioned corpus receipt.
+5. Compare that receipt with the evaluation scorecard that allowed the build to receive traffic.
+6. Return here and follow the [architecture](#architecture) from source to validated answer.
+
+> RAGLab is a deployable, local-first RAG built from first principles: idempotent ingestion,
+> hybrid retrieval, strictly cited generation, reproducible evaluation, and GPU-aware delivery.
+
+The public surface is intentionally read-only. Arbitrary uploads would add SSRF, malicious-file,
+storage, and GPU-abuse risks without demonstrating better retrieval engineering.
+
 ## Learning path
 
 | Step | Start here | What you learn |
@@ -126,7 +141,7 @@ Requirements: Python 3.12, Docker, and Ollama.
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e '.[dev,tokenizers,conversion,retrieval]'
+python -m pip install -e '.[dev,tokenizers,conversion,retrieval,generation]'
 python -c "from transformers import AutoTokenizer; AutoTokenizer.from_pretrained('Qwen/Qwen3-Embedding-0.6B')"
 cp env.template .env
 docker compose up -d --wait
@@ -137,7 +152,7 @@ ollama pull qwen3:4b
 Run `ollama serve` in another terminal if Ollama is not already a system service. Compose exposes
 PostgreSQL only at `127.0.0.1:5432`.
 
-The three CLI commands automatically load the nearest `.env` from the current directory upward.
+The CLI commands automatically load the nearest `.env` from the current directory upward.
 Explicit CLI flags take priority over exported environment variables, which take priority over
 `.env`; internal defaults remain available when no `.env` exists. Docker Compose reads the same
 file. If you change `POSTGRES_DB`, `POSTGRES_USER`, or `POSTGRES_PASSWORD`, update the credentials
@@ -166,6 +181,101 @@ python -m pip install -e . --no-deps
 
 Running ingestion again returns `status: "skipped"` and `chunk_count: 0`; it does not duplicate
 vectors.
+
+## Recruiter demo: corpus to deployment gate
+
+The demo corpus contains nine small, attributed Markdown snapshots derived from official
+Raspberry Pi documentation: three each for computers, microcontrollers, and camera/AI. The
+manifest pins every source by SHA-256 and upstream revision before any write begins. Ingestion
+reads the tracked snapshot without network access but stores its revision-pinned upstream URL as
+the canonical source URI, making live citations navigable.
+
+```bash
+raglab-ingest-corpus data/demo/raspberry_pi_v1.json \
+  --receipt artifacts/ingestion/raspberry_pi_v1.json
+
+raglab-evaluate data/evaluation/raspberry_pi_demo_v1.json \
+  --output artifacts/evaluation/raspberry_pi_demo_v1.json
+
+raglab-evaluation-gate artifacts/evaluation/raspberry_pi_demo_v1.json \
+  data/evaluation/baselines/raspberry_pi_demo_v1.json
+
+RAGLAB_DEMO_TOKEN=replace-me uvicorn raglab.demo_cli:app --port 8000
+```
+
+`GET /health/live`, `GET /health/ready`, and `GET /v1/demo/status` are public and read-only.
+`POST /v1/query` requires a bearer token; the browser keeps it only in memory. There is no public
+ingestion or deletion endpoint. The promotion gate rejects forbidden phrases, invalid citations,
+wrong abstention behavior, or a summary metric regression greater than `0.05`. The status response
+includes the run, its baseline, and an `approved` value recomputed from that same policy.
+
+For one-server production, `compose.production.yaml` keeps PostgreSQL and Ollama private, starts
+the API only after model initialization, idempotent ingestion, and evaluation succeed, and uses
+Traefik for TLS, rate limiting, and concurrency limits. The GitHub Actions workflows verify pull
+requests, publish images by commit SHA, record the resulting immutable digest, and require that
+digest plus its build SHA for an approval-gated production deployment with rollback.
+
+### Production operator path
+
+The target host needs Linux `amd64`, Docker Compose v2, the NVIDIA Container Toolkit, a working
+NVIDIA GPU, and DNS for `RAGLAB_DOMAIN` pointing at the server. Copy `env.template` to
+`/srv/raglab/.env`, replace every example credential, and set at least:
+
+| Variable | Purpose |
+| -------- | ------- |
+| `POSTGRES_PASSWORD` | Private ParadeDB credential; use a generated secret. |
+| `RAGLAB_DEMO_TOKEN` | Bearer token accepted only by `POST /v1/query`. |
+| `RAGLAB_DOMAIN` | Public hostname used by Traefik. |
+| `ACME_EMAIL` | Let's Encrypt registration and expiry contact. |
+| `RAGLAB_IMAGE` | Immutable `ghcr.io/...@sha256:...` image reference. |
+| `RAGLAB_BUILD_SHA` | Source revision displayed by `/v1/demo/status`. |
+
+Do not publish PostgreSQL or Ollama ports. The production Compose file exposes only Traefik on
+ports 80 and 443 and persists database data, Ollama models, Hugging Face models, receipts, and TLS
+certificates in named volumes.
+
+The normal release path is:
+
+1. Merge a verified change into `main`; **Publish image** pushes the commit tag and reports its
+   immutable digest in the workflow summary.
+2. Run **Deploy production** with that `sha256:...` digest and its source commit SHA, then approve
+   the protected `production` environment.
+3. The server pulls the digest, initializes pinned models, ingests the corpus, runs the Raspberry
+   Pi evaluation and promotion gate, starts the API, and executes the authenticated golden query.
+4. Any ingestion, evaluation, health, or smoke failure restores `.last-good-image`. On the first
+   deployment there is no previous image, so failure stops promotion rather than inventing one.
+
+Provision the host once before running that workflow. The SSH account stored in
+`DEPLOY_HOST`/`DEPLOY_SSH_KEY` must be able to write `/srv/raglab` and use Docker:
+
+```bash
+sudo install -d -o "$USER" -g "$USER" /srv/raglab
+cd /srv/raglab
+umask 077
+# Create .env here from env.template and replace every example value.
+docker login ghcr.io  # Required when the GHCR package is private.
+```
+
+The workflow deliberately copies only `compose.production.yaml`; it never overwrites the
+server-owned `.env`. Make the GHCR package public or authenticate the server with a read-only
+package token.
+
+For a manual dry run on the target host:
+
+```bash
+cd /srv/raglab
+docker compose -f compose.production.yaml config --quiet
+docker compose -f compose.production.yaml pull
+docker compose -f compose.production.yaml up -d --wait
+curl -fsS "https://${RAGLAB_DOMAIN}/health/ready"
+```
+
+Inside the containers, `/app/artifacts/ingestion/raspberry_pi_v1.json` is replaced only after all
+nine sources succeed, while `/app/artifacts/evaluation/raspberry_pi_demo_v1.json` keeps complete
+per-case traces. These files live in the named `artifacts` volume rather than the host project
+directory. Inspect them through `/v1/demo/status` or with
+`docker compose -f compose.production.yaml exec -T api cat /app/artifacts/...`. Neither path
+exposes write operations or model chain-of-thought.
 
 # Chapter 1 — Ingestion and indexing
 
@@ -711,6 +821,7 @@ Generation checks facts independently of retrieval ranking:
 fact coverage              = expected facts expressed / expected facts
 grounded fact coverage     = expressed facts backed by a valid cited source / expected facts
 citation precision         = valid cited sources / cited sources
+abstention accuracy        = correct answer-or-abstain outcomes / cases
 ```
 
 Every result also lists found and missing facts, evidence positions, cited sources, forbidden
@@ -746,6 +857,49 @@ run = application.run(load_cases("data/evaluation/aster_greenhouse_controller_v1
 print(run.report.generation_summary)
 ```
 
+## Evaluate the deployed demo corpus
+
+The Raspberry Pi dataset complements the four pedagogical Aster cases with six release cases: one
+answerable question and one expected abstention for each public collection. Every case declares
+`expected_outcome: answer | abstain` and its own collection, so a single run exercises the same
+boundaries exposed by the recruiter demo.
+
+```bash
+raglab-evaluate data/evaluation/raspberry_pi_demo_v1.json \
+  --output artifacts/evaluation/raspberry_pi_demo_v1.json
+
+raglab-evaluation-gate artifacts/evaluation/raspberry_pi_demo_v1.json \
+  data/evaluation/baselines/raspberry_pi_demo_v1.json
+```
+
+The versioned dataset and corpus receipt preserve the expected cases and source hashes. The run
+records the dataset hash, retrieval and generation settings, pinned BGE and NLI revisions, build
+SHA, duration, responses, and per-case traces. The terminal shows a short scorecard while
+`--output` atomically preserves the complete run.
+The promotion gate fails when a case emits a forbidden phrase, cites an invalid source, misses an
+expected abstention, or regresses a baseline metric by more than `0.05`.
+
+## `raglab-evaluate` reference
+
+| Parameter | Default | Meaning |
+| --------- | ------- | ------- |
+| `dataset` | Aster v1 | Versioned JSON evaluation cases. |
+| `--collection` | `documents` | Fallback collection for cases that do not declare one. |
+| `--output` | None | Atomically persist the complete JSON run for inspection or gating. |
+| `--dsn` | `RAGLAB_DSN` | PostgreSQL/ParadeDB connection string. |
+| `--candidate-k`, `--top-k` | `50`, `3` | Retrieval candidate pool and evaluated result count. |
+| `--minimum-sources` | `1` | Requested evidence-source floor for generation. |
+| `--exact`, `--ef-search` | Disabled, `100` | Exact semantic search or HNSW breadth. |
+| `--rewrite`, `--expansions` | Disabled, `0` | Optional query rewrite and expansion. |
+| `--no-rerank`, `--no-mmr`, `--no-small-to-big` | Disabled | Turn off one retrieval refinement stage. |
+| `--model`, `--embedding-model` | Environment or pinned defaults | Generation and compatible embedding models. |
+| `--ollama-base-url` | Local Ollama | Ollama service URL. |
+| `--num-ctx`, `--num-predict`, `--keep-alive` | `12288`, `512`, `5m` | Generation resource controls. |
+
+`raglab-evaluation-gate RUN BASELINE [--tolerance 0.05]` is deliberately separate from scoring:
+evaluation preserves evidence, while the gate owns the release policy and exits non-zero on any
+violation.
+
 `build_report` produces a versioned, JSON-serializable report. `compare_reports` shows previous,
 current, and delta values and rejects reports with different case IDs or `top_k` values instead of
 comparing unlike experiments.
@@ -765,13 +919,14 @@ jupyter execute notebooks/04_rag_evaluation.ipynb \
   --output /tmp/raglab-evaluation-live.ipynb
 ```
 
-## What v1 does not prove
+## What the evaluation does not prove
 
 String variants make known facts and regressions explainable, but they do not prove full semantic
-equivalence, writing quality, completeness outside the four cases, or safety in an unseen domain.
-This report is a signal, not a CI gate. The next useful steps are negative and adversarial cases,
-human review, semantic or model-based judges, and end-to-end evaluation under controlled service
-versions. [Ragas](https://docs.ragas.io/en/stable/concepts/metrics/available_metrics/) and
+equivalence, writing quality, completeness outside the ten versioned cases, or safety in an unseen
+domain. The Aster scorecard remains a teaching signal; the Raspberry Pi scorecard is a bounded CI
+deployment gate for this exact demo corpus, not a general quality guarantee. The next useful steps
+are broader human-reviewed cases, semantic or model-based judges, and production tracing under
+controlled service versions. [Ragas](https://docs.ragas.io/en/stable/concepts/metrics/available_metrics/) and
 [DeepEval](https://deepeval.com/docs/metrics-introduction) become worth comparing only when those
 model-based tradeoffs are intentional; v1 avoids adding either framework prematurely.
 
