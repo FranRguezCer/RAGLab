@@ -9,9 +9,11 @@ description = "A local-first, inspectable RAG ingestion pipeline"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+  "fastapi>=0.115,<0.120",
   "markdown-it-py>=3.0,<5",
   "psycopg[binary]>=3.2,<4",
   "python-dotenv>=1.0,<2",
+  "uvicorn[standard]>=0.34,<0.40",
 ]
 
 [project.scripts]
@@ -19,6 +21,8 @@ raglab-ingest = "raglab.cli:entrypoint"
 raglab-retrieve = "raglab.retrieval.cli:entrypoint"
 raglab-generate = "raglab.generation.cli:entrypoint"
 raglab-evaluate = "raglab.evaluation_cli:entrypoint"
+raglab-ingest-corpus = "raglab.corpus_cli:entrypoint"
+raglab-evaluation-gate = "raglab.evaluation_gate:main"
 
 [project.optional-dependencies]
 conversion = ["docling>=2,<3", "easyocr>=1.7,<2"]
