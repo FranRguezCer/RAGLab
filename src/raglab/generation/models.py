@@ -24,6 +24,7 @@ class GenerationConfig:
     parallelism: int = 1
     keep_alive: str = "5m"
     minimum_sources: int = 5
+    seed: int = 7
 
     def __post_init__(self) -> None:
         if not self.model.strip():

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import re
 import time
+import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 
@@ -42,6 +44,7 @@ class _Parent:
     embedding: tuple[float, ...]
     source: FusedCandidate
     reranker_score: float | None
+    evidence_ids: tuple[str, ...]
 
 
 class RetrievalPipeline:
@@ -137,6 +140,7 @@ class RetrievalPipeline:
                     matched_chunk_ids=tuple(
                         dict.fromkeys(previous.matched_chunk_ids + parent.matched_chunk_ids)
                     ),
+                    evidence_ids=tuple(dict.fromkeys(previous.evidence_ids + parent.evidence_ids)),
                 )
         ranked = list(parents.values())
         profile.postgres_calls += len(document_cache)
@@ -156,9 +160,7 @@ class RetrievalPipeline:
         profile.emit()
         return response
 
-    def _query_variants(
-        self, request: RetrievalRequest
-    ) -> tuple[list[str], str | None, bool]:
+    def _query_variants(self, request: RetrievalRequest) -> tuple[list[str], str | None, bool]:
         enabled = request.config.rewrite or bool(request.history)
         if not enabled or self.rewriter is None:
             return [request.query], None, False
@@ -331,6 +333,7 @@ class RetrievalPipeline:
             embedding=candidate.chunk.embedding,
             source=candidate,
             reranker_score=reranker_score,
+            evidence_ids=(_canonical_evidence_id(candidate.chunk),),
         )
 
     def _select(
@@ -371,4 +374,25 @@ class RetrievalPipeline:
                 reranker_score=parent.reranker_score,
                 mmr_score=mmr_score,
             ),
+            evidence_ids=parent.evidence_ids,
         )
+
+
+def _canonical_evidence_id(chunk: RetrievedChunk) -> str:
+    configured = chunk.document_metadata.get("source_id")
+    if isinstance(configured, str) and configured.strip():
+        return configured.strip()
+    parts = (chunk.citation.source_name, *chunk.citation.heading_path)
+    return "/".join(
+        slug
+        for value in parts
+        if (
+            slug := re.sub(
+                r"-+",
+                "-",
+                re.sub(r"[^\w]+", "-", unicodedata.normalize("NFKC", value).casefold()).replace(
+                    "_", "-"
+                ),
+            ).strip("-")
+        )
+    )

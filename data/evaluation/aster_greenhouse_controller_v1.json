@@ -32,7 +32,12 @@
           ]
         }
       ],
-      "forbidden_phrases": ["watering is forced", "valve opens anyway"]
+      "forbidden_phrases": [
+        "watering is forced",
+        "valve opens anyway"
+      ],
+      "expected_outcome": "answer",
+      "collection": "documents"
     },
     {
       "id": "low-flow-e17",
@@ -41,7 +46,10 @@
         {
           "id": "close-valve",
           "text": "The controller closes the active valve.",
-          "answer_variants": ["controller closes the valve", "close the active valve"],
+          "answer_variants": [
+            "controller closes the valve",
+            "close the active valve"
+          ],
           "evidence_source_ids": [
             "aster-greenhouse-controller-manual-md/aster-greenhouse-controller-operator-manual/3-climate-targets-and-irrigation-rules/irrigation-schedule",
             "aster-greenhouse-controller-manual-md/aster-greenhouse-controller-operator-manual/5-fault-diagnosis"
@@ -50,14 +58,22 @@
         {
           "id": "raise-e17",
           "text": "The controller raises fault E17.",
-          "answer_variants": ["raises e17", "raise fault e17"],
+          "answer_variants": [
+            "raises e17",
+            "raise fault e17"
+          ],
           "evidence_source_ids": [
             "aster-greenhouse-controller-manual-md/aster-greenhouse-controller-operator-manual/3-climate-targets-and-irrigation-rules/irrigation-schedule",
             "aster-greenhouse-controller-manual-md/aster-greenhouse-controller-operator-manual/5-fault-diagnosis"
           ]
         }
       ],
-      "forbidden_phrases": ["extends the window", "keeps the valve open"]
+      "forbidden_phrases": [
+        "extends the window",
+        "keeps the valve open"
+      ],
+      "expected_outcome": "answer",
+      "collection": "documents"
     },
     {
       "id": "isolation-e41",
@@ -66,7 +82,10 @@
         {
           "id": "stop-and-record",
           "text": "Stop the procedure and record fault E41.",
-          "answer_variants": ["stop the procedure and record fault e41", "stop and record e41"],
+          "answer_variants": [
+            "stop the procedure and record fault e41",
+            "stop and record e41"
+          ],
           "evidence_source_ids": [
             "aster-greenhouse-controller-manual-md/aster-greenhouse-controller-operator-manual/1-system-overview-and-safety/safety-boundaries"
           ]
@@ -83,7 +102,12 @@
           ]
         }
       ],
-      "forbidden_phrases": ["bypass the isolation alarm", "continue the procedure"]
+      "forbidden_phrases": [
+        "bypass the isolation alarm",
+        "continue the procedure"
+      ],
+      "expected_outcome": "answer",
+      "collection": "documents"
     },
     {
       "id": "restore-backup",
@@ -114,7 +138,12 @@
           ]
         }
       ],
-      "forbidden_phrases": ["updates firmware", "erases historical audit events"]
+      "forbidden_phrases": [
+        "updates firmware",
+        "erases historical audit events"
+      ],
+      "expected_outcome": "answer",
+      "collection": "documents"
     }
   ]
 }

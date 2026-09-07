@@ -161,6 +161,7 @@ class RetrievalResult:
     first_chunk_index: int
     last_chunk_index: int
     trace: RankingTrace
+    evidence_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

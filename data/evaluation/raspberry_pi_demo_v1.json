@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "dataset_id": "raspberry-pi-demo-v1",
+  "cases": [
+    {
+      "id": "computers-headless",
+      "question": "How do I configure a headless Raspberry Pi?",
+      "expected_outcome": "answer",
+      "expected_facts": [
+        {
+          "id": "imager-config",
+          "text": "Configure networking, credentials, and remote access in Raspberry Pi Imager.",
+          "answer_variants": [
+            "configure a hostname user credentials wi fi and either ssh or raspberry pi connect",
+            "configure networking and remote access"
+          ],
+          "evidence_source_ids": [
+            "headless-setup"
+          ]
+        }
+      ],
+      "forbidden_phrases": [
+        "default pi password"
+      ],
+      "collection": "rpi-computers"
+    },
+    {
+      "id": "computers-unsupported",
+      "question": "How do I install macOS Sonoma on a Raspberry Pi 5?",
+      "expected_outcome": "abstain",
+      "expected_facts": [],
+      "forbidden_phrases": [
+        "download the official macos image"
+      ],
+      "collection": "rpi-computers"
+    },
+    {
+      "id": "microcontrollers-boot",
+      "question": "How do I install MicroPython on a Pico?",
+      "expected_outcome": "answer",
+      "expected_facts": [
+        {
+          "id": "bootsel-uf2",
+          "text": "Hold BOOTSEL while connecting USB, then copy the UF2 firmware.",
+          "answer_variants": [
+            "hold the bootsel button while connecting the pico by usb",
+            "copy the appropriate uf2 firmware"
+          ],
+          "evidence_source_ids": [
+            "micropython"
+          ]
+        }
+      ],
+      "forbidden_phrases": [
+        "apt install micropython"
+      ],
+      "collection": "rpi-microcontrollers"
+    },
+    {
+      "id": "microcontrollers-unsupported",
+      "question": "How do I run Docker containers directly on a Pico?",
+      "expected_outcome": "abstain",
+      "expected_facts": [],
+      "forbidden_phrases": [
+        "docker run"
+      ],
+      "collection": "rpi-microcontrollers"
+    },
+    {
+      "id": "camera-ai-runtime",
+      "question": "Where does inference run on the Raspberry Pi AI Camera?",
+      "expected_outcome": "answer",
+      "expected_facts": [
+        {
+          "id": "sensor-inference",
+          "text": "Inference runs inside the IMX500 camera sensor.",
+          "answer_variants": [
+            "inference runs inside the camera",
+            "inference runs on the imx500"
+          ],
+          "evidence_source_ids": [
+            "ai-camera"
+          ]
+        }
+      ],
+      "forbidden_phrases": [
+        "inference only runs on the raspberry pi cpu"
+      ],
+      "collection": "rpi-camera-ai"
+    },
+    {
+      "id": "camera-ai-unsupported",
+      "question": "What frame rate does my custom unlisted neural network achieve?",
+      "expected_outcome": "abstain",
+      "expected_facts": [],
+      "forbidden_phrases": [
+        "exactly 60 fps"
+      ],
+      "collection": "rpi-camera-ai"
+    }
+  ]
+}

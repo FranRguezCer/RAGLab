@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import unicodedata
@@ -49,14 +50,14 @@ class EvaluationCase:
     question: str
     expected_facts: tuple[ExpectedFact, ...]
     forbidden_phrases: tuple[str, ...]
+    expected_outcome: str = "answer"
+    collection: str | None = None
 
     @property
     def relevant_source_ids(self) -> tuple[str, ...]:
         return tuple(
             dict.fromkeys(
-                source_id
-                for fact in self.expected_facts
-                for source_id in fact.evidence_source_ids
+                source_id for fact in self.expected_facts for source_id in fact.evidence_source_ids
             )
         )
 
@@ -66,6 +67,7 @@ class EvaluationDataset:
     schema_version: int
     dataset_id: str
     cases: tuple[EvaluationCase, ...]
+    content_sha256: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,7 +78,13 @@ class RetrievalOutput:
     def from_response(cls, response: RetrievalResponse) -> Self:
         return cls(
             tuple(
-                dict.fromkeys(citation_evidence_id(result.citation) for result in response.results)
+                dict.fromkeys(
+                    evidence_id
+                    for result in response.results
+                    for evidence_id in (
+                        result.evidence_ids or (citation_evidence_id(result.citation),)
+                    )
+                )
             )
         )
 
@@ -85,6 +93,7 @@ class RetrievalOutput:
 class GenerationOutput:
     answer: str
     cited_source_ids: tuple[str, ...]
+    abstained: bool = False
 
     @classmethod
     def from_response(cls, response: GenerationResponse) -> Self:
@@ -98,15 +107,17 @@ class GenerationOutput:
         unknown = [source_id for source_id in cited_ids if source_id not in sources_by_id]
         if unknown:
             raise ValueError(f"generation response cites unknown source IDs: {unknown}")
-        return cls(
-            response.answer,
-            tuple(
-                dict.fromkeys(
-                    citation_evidence_id(sources_by_id[source_id].citation)
-                    for source_id in cited_ids
-                )
-            ),
-        )
+        retrieval_by_id = {result.id: result for result in response.retrieval.results}
+        evidence_ids: list[str] = []
+        for source_id in cited_ids:
+            source = sources_by_id[source_id]
+            result = retrieval_by_id.get(source.retrieval_result_id)
+            evidence_ids.extend(
+                result.evidence_ids
+                if result and result.evidence_ids
+                else (citation_evidence_id(source.citation),)
+            )
+        return cls(response.answer, tuple(dict.fromkeys(evidence_ids)), response.abstained)
 
 
 def adapt_retrieval_response(response: RetrievalResponse) -> RetrievalOutput:
@@ -146,6 +157,8 @@ class GenerationCaseResult:
     fact_coverage: float
     grounded_fact_coverage: float
     citation_precision: float
+    expected_outcome: str
+    abstention_correct: bool
 
 
 def evaluate_retrieval(
@@ -184,7 +197,7 @@ def evaluate_retrieval(
                     source_id for source_id in relevant if source_id not in limited
                 ),
                 precision_at_k=len(retrieved) / top_k,
-                recall_at_k=len(retrieved) / len(relevant),
+                recall_at_k=len(retrieved) / len(relevant) if relevant else 1.0,
                 mrr_at_k=0.0 if first_rank is None else 1 / first_rank,
             )
         )
@@ -226,11 +239,10 @@ def evaluate_generation(
             source_id for source_id in output.cited_source_ids if source_id not in relevant_to_found
         )
         forbidden_hits = tuple(
-            phrase
-            for phrase in case.forbidden_phrases
-            if normalize_text(phrase) in answer
+            phrase for phrase in case.forbidden_phrases if normalize_text(phrase) in answer
         )
         fact_count = len(case.expected_facts)
+        abstention_correct = output.abstained == (case.expected_outcome == "abstain")
         evaluated.append(
             GenerationCaseResult(
                 case_id=case.id,
@@ -245,13 +257,15 @@ def evaluate_generation(
                 valid_citation_source_ids=valid,
                 invalid_citation_source_ids=invalid,
                 forbidden_phrase_hits=forbidden_hits,
-                fact_coverage=len(found) / fact_count,
-                grounded_fact_coverage=len(grounded) / fact_count,
+                fact_coverage=len(found) / fact_count if fact_count else 1.0,
+                grounded_fact_coverage=len(grounded) / fact_count if fact_count else 1.0,
                 citation_precision=(
-                    len(valid) / len(output.cited_source_ids)
-                    if output.cited_source_ids
-                    else 0.0
-                ),
+                    len(valid) / len(output.cited_source_ids) if output.cited_source_ids else 0.0
+                )
+                if case.expected_outcome == "answer"
+                else float(not output.cited_source_ids),
+                expected_outcome=case.expected_outcome,
+                abstention_correct=abstention_correct,
             )
         )
     return tuple(evaluated)
@@ -289,6 +303,8 @@ def build_report(
     if len(top_values) != 1:
         raise ValueError("retrieval results must use one top_k value")
     top_k = next(iter(top_values))
+    answer_case_ids = {case.id for case in dataset.cases if case.expected_outcome == "answer"}
+    retrieval_answers = tuple(item for item in retrieval if item.case_id in answer_case_ids)
     return EvaluationReport(
         schema_version=REPORT_SCHEMA_VERSION,
         dataset_id=dataset.dataset_id,
@@ -297,14 +313,15 @@ def build_report(
         retrieval=tuple(retrieval),
         generation=tuple(generation),
         retrieval_summary={
-            "precision_at_k": _mean(item.precision_at_k for item in retrieval),
-            "recall_at_k": _mean(item.recall_at_k for item in retrieval),
-            "mrr_at_k": _mean(item.mrr_at_k for item in retrieval),
+            "precision_at_k": _mean(item.precision_at_k for item in retrieval_answers),
+            "recall_at_k": _mean(item.recall_at_k for item in retrieval_answers),
+            "mrr_at_k": _mean(item.mrr_at_k for item in retrieval_answers),
         },
         generation_summary={
             "fact_coverage": _mean(item.fact_coverage for item in generation),
             "grounded_fact_coverage": _mean(item.grounded_fact_coverage for item in generation),
             "citation_precision": _mean(item.citation_precision for item in generation),
+            "abstention_accuracy": _mean(float(item.abstention_correct) for item in generation),
         },
     )
 
@@ -345,7 +362,8 @@ def compare_reports(previous: EvaluationReport, current: EvaluationReport) -> Re
 
 
 def load_cases(path: str | Path) -> EvaluationDataset:
-    raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    payload = Path(path).read_bytes()
+    raw = json.loads(payload)
     root = _object(raw, "dataset")
     _exact_keys(root, {"schema_version", "dataset_id", "cases"}, "dataset")
     schema_version = _integer(root["schema_version"], "dataset.schema_version")
@@ -357,19 +375,27 @@ def load_cases(path: str | Path) -> EvaluationDataset:
         raise ValueError("dataset.cases cannot be empty")
     cases = tuple(_parse_case(row, index) for index, row in enumerate(rows))
     _require_unique((case.id for case in cases), "case IDs")
-    return EvaluationDataset(schema_version, dataset_id, cases)
+    return EvaluationDataset(schema_version, dataset_id, cases, hashlib.sha256(payload).hexdigest())
 
 
 def _parse_case(raw: object, index: int) -> EvaluationCase:
     location = f"dataset.cases[{index}]"
     row = _object(raw, location)
-    _exact_keys(row, {"id", "question", "expected_facts", "forbidden_phrases"}, location)
+    required = {"id", "question", "expected_facts", "forbidden_phrases"}
+    allowed = required | {"expected_outcome", "collection"}
+    if not required <= row.keys() or not row.keys() <= allowed:
+        raise ValueError(
+            f"{location} has invalid fields; missing={sorted(required - row.keys())}, "
+            f"extra={sorted(row.keys() - allowed)}"
+        )
     facts_raw = _list(row["expected_facts"], f"{location}.expected_facts")
-    if not facts_raw:
-        raise ValueError(f"{location}.expected_facts cannot be empty")
+    outcome = _text(row.get("expected_outcome", "answer"), f"{location}.expected_outcome")
+    if outcome not in {"answer", "abstain"}:
+        raise ValueError(f"{location}.expected_outcome must be 'answer' or 'abstain'")
+    if outcome == "answer" and not facts_raw:
+        raise ValueError(f"{location}.expected_facts cannot be empty for answer cases")
     facts = tuple(
-        _parse_fact(value, location, fact_index)
-        for fact_index, value in enumerate(facts_raw)
+        _parse_fact(value, location, fact_index) for fact_index, value in enumerate(facts_raw)
     )
     _require_unique((fact.id for fact in facts), f"fact IDs in {location}")
     forbidden = _text_tuple(row["forbidden_phrases"], f"{location}.forbidden_phrases")
@@ -378,6 +404,12 @@ def _parse_case(raw: object, index: int) -> EvaluationCase:
         question=_text(row["question"], f"{location}.question"),
         expected_facts=facts,
         forbidden_phrases=forbidden,
+        expected_outcome=outcome,
+        collection=(
+            _text(row["collection"], f"{location}.collection")
+            if "collection" in row
+            else None
+        ),
     )
 
 
@@ -455,8 +487,7 @@ def _integer(value: object, location: str) -> int:
 
 def _text_tuple(value: object, location: str) -> tuple[str, ...]:
     return tuple(
-        _text(item, f"{location}[{index}]")
-        for index, item in enumerate(_list(value, location))
+        _text(item, f"{location}[{index}]") for index, item in enumerate(_list(value, location))
     )
 
 
@@ -477,6 +508,4 @@ def _require_unique(values: Iterable[str], label: str) -> None:
 
 def _slug(value: str) -> str:
     normalized = unicodedata.normalize("NFKC", value).casefold()
-    return re.sub(r"-+", "-", re.sub(r"[^\w]+", "-", normalized).replace("_", "-")).strip(
-        "-"
-    )
+    return re.sub(r"-+", "-", re.sub(r"[^\w]+", "-", normalized).replace("_", "-")).strip("-")

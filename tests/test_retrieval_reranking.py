@@ -66,13 +66,13 @@ def test_reranker_uses_bounded_inference_batches_and_reuses_model(
 
     class AutoTokenizer:
         @staticmethod
-        def from_pretrained(model: str) -> Tokenizer:
+        def from_pretrained(model: str, **_kwargs: object) -> Tokenizer:
             state["tokenizer_loads"].append(model)
             return Tokenizer()
 
     class AutoModelForSequenceClassification:
         @staticmethod
-        def from_pretrained(model: str) -> Model:
+        def from_pretrained(model: str, **_kwargs: object) -> Model:
             state["model_loads"].append(model)
             return Model()
 
@@ -172,10 +172,10 @@ def test_reranker_uses_cuda_fp32_then_retries_oom_on_cpu(
             return SimpleNamespace(logits=_Tensor([float(len(item)) for item in documents]))
 
     class AutoTokenizer:
-        from_pretrained = staticmethod(lambda _model: Tokenizer())
+        from_pretrained = staticmethod(lambda _model, **_kwargs: Tokenizer())
 
     class AutoModelForSequenceClassification:
-        from_pretrained = staticmethod(lambda _model: Model())
+        from_pretrained = staticmethod(lambda _model, **_kwargs: Model())
 
     torch = ModuleType("torch")
     torch.cuda = Cuda  # type: ignore[attr-defined]

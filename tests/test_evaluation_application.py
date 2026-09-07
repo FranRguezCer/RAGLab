@@ -115,6 +115,7 @@ def test_application_runs_real_generation_boundary_and_returns_traces_and_report
     assert run.traces[0].retrieval.recall_at_k == 1.0
     assert run.traces[0].generation.grounded_fact_coverage == 1.0
     assert run.report.retrieval_summary["recall_at_k"] == 1.0
+    assert run.metadata["dataset_sha256"] is None
     assert json.loads(run.to_json())["traces"][0]["response"]["metrics"]["selection_calls"] == 1
 
 
@@ -199,7 +200,7 @@ def test_live_factory_composes_postgres_and_ollama_behind_application_boundary(
         "model": "embed",
         "dimension": 1024,
         "base_url": "http://ollama",
-        "num_gpu": 0,
+        "num_gpu": None,
         "num_ctx": 4096,
         "keep_alive": "10m",
     }
@@ -246,8 +247,10 @@ def test_evaluation_cli_uses_application_and_writes_complete_json(
 
     printed = json.loads(capsys.readouterr().out)
     persisted = json.loads(output.read_text())
-    assert printed == persisted
-    assert printed["report"]["dataset_id"] == "dataset"
-    assert printed["traces"][0]["response"]["answer"] == "Alpha happens."
+    assert printed["dataset_id"] == "dataset"
+    assert printed["case_count"] == 1
+    assert printed["output"] == str(output)
+    assert persisted["report"]["dataset_id"] == "dataset"
+    assert persisted["traces"][0]["response"]["answer"] == "Alpha happens."
     assert pipeline.requests[0].retrieval.collection == "manuals"
     assert captured["retrieval_config"].top_k == 1  # type: ignore[union-attr]

@@ -43,6 +43,7 @@ class OllamaGenerationModel:
                 "num_ctx": config.num_ctx,
                 "num_predict": config.num_predict,
                 "temperature": 0,
+                "seed": config.seed,
             },
         }
         payload = self._request(body)

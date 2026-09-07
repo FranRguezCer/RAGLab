@@ -40,6 +40,7 @@ def test_ollama_uses_schema_no_think_context_and_positive_ttl() -> None:
         "num_ctx": 12288,
         "num_predict": 512,
         "temperature": 0,
+        "seed": 7,
     }
     assert result.prompt_tokens == 12
     assert result.payload["source_ids"] == ["S1"]
@@ -87,9 +88,7 @@ def test_ollama_does_not_send_qwen_command_to_other_models() -> None:
     assert client.body["think"] is False
 
 
-@pytest.mark.parametrize(
-    "ttl", ["", "0", "0s", "0m", "0h", "-1m", "banana", "5minutes", "1e3s"]
-)
+@pytest.mark.parametrize("ttl", ["", "0", "0s", "0m", "0h", "-1m", "banana", "5minutes", "1e3s"])
 def test_generation_config_rejects_non_positive_ttl(ttl: str) -> None:
     with pytest.raises(ValueError, match="positive Ollama duration"):
         GenerationConfig(keep_alive=ttl)

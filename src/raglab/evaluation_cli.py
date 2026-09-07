@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from collections.abc import Sequence
 from pathlib import Path
@@ -118,10 +119,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         serialized = run.to_json()
         if args.output is not None:
             args.output.parent.mkdir(parents=True, exist_ok=True)
-            args.output.write_text(serialized, encoding="utf-8")
+            temporary = args.output.with_name(f".{args.output.name}.tmp")
+            temporary.write_text(serialized, encoding="utf-8")
+            os.replace(temporary, args.output)
     except (OSError, RagLabError, RuntimeError, ValueError) as exc:
         parser.exit(1, f"raglab-evaluate: error: {exc}\n")
-    print(serialized, end="")
+    summary = {
+        "dataset_id": run.report.dataset_id,
+        "case_count": len(run.report.case_ids),
+        "retrieval_summary": run.report.retrieval_summary,
+        "generation_summary": run.report.generation_summary,
+        "duration_seconds": run.metadata["duration_seconds"],
+        "output": str(args.output) if args.output is not None else None,
+    }
+    print(json.dumps(summary, indent=2, sort_keys=True))
     return 0
 
 

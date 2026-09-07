@@ -9,6 +9,8 @@ from typing import Any
 _MAX_LENGTH = 512
 _BATCH_SIZE = 4
 _DEVICES = {"auto", "cuda", "cpu"}
+BGE_MODEL = "BAAI/bge-reranker-v2-m3"
+BGE_REVISION = "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e"
 
 
 class BGEReranker:
@@ -16,7 +18,7 @@ class BGEReranker:
 
     def __init__(
         self,
-        model: str = "BAAI/bge-reranker-v2-m3",
+        model: str = BGE_MODEL,
         *,
         device: str | None = None,
     ) -> None:
@@ -54,18 +56,22 @@ class BGEReranker:
             raise RuntimeError("Install `raglab[retrieval]` to use the BGE reranker") from exc
         if self._tokenizer is None:
             self._tokenizer = AutoTokenizer.from_pretrained(  # type: ignore[no-untyped-call]
-                self.model
+                self.model, revision=BGE_REVISION
             )
         target = self._target_device(torch)
         try:
-            self._model = AutoModelForSequenceClassification.from_pretrained(self.model)
+            self._model = AutoModelForSequenceClassification.from_pretrained(
+                self.model, revision=BGE_REVISION
+            )
             self._prepare_model(target)
         except Exception:
             if target != "cuda":
                 raise
             self._model = None
             self._empty_cuda_cache(torch)
-            self._model = AutoModelForSequenceClassification.from_pretrained(self.model)
+            self._model = AutoModelForSequenceClassification.from_pretrained(
+                self.model, revision=BGE_REVISION
+            )
             self._prepare_model("cpu")
 
     def _prepare_model(self, device: str) -> None:
@@ -106,7 +112,9 @@ class BGEReranker:
             from transformers import AutoModelForSequenceClassification
 
             self._model = None
-            self._model = AutoModelForSequenceClassification.from_pretrained(self.model)
+            self._model = AutoModelForSequenceClassification.from_pretrained(
+                self.model, revision=BGE_REVISION
+            )
             self._prepare_model("cpu")
         self._empty_cuda_cache(torch)
 
