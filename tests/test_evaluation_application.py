@@ -116,6 +116,7 @@ def test_application_runs_real_generation_boundary_and_returns_traces_and_report
     assert run.traces[0].generation.grounded_fact_coverage == 1.0
     assert run.report.retrieval_summary["recall_at_k"] == 1.0
     assert run.metadata["dataset_sha256"] is None
+    assert run.metadata["image_digest"] is None
     assert json.loads(run.to_json())["traces"][0]["response"]["metrics"]["selection_calls"] == 1
 
 

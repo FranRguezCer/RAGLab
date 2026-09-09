@@ -134,6 +134,7 @@ class EvaluationApplication:
             {
                 "duration_seconds": round(time.perf_counter() - started, 6),
                 "build": os.environ.get("RAGLAB_BUILD_SHA", "development"),
+                "image_digest": os.environ.get("RAGLAB_IMAGE_DIGEST"),
                 "dataset_sha256": dataset.content_sha256,
                 "retrieval_config": asdict(self.retrieval_config),
                 "generation_config": asdict(self.generation_config),
