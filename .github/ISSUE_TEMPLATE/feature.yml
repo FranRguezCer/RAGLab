@@ -1,0 +1,40 @@
+name: Feature or change request
+description: Propose an approved, reviewable change to RAGLab.
+title: "[Feature]: "
+labels:
+  - "type:feature"
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What should change, and why does it matter?
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: Describe what is included and explicitly excluded.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: List objective outcomes that prove the change is complete.
+      placeholder: |
+        - [ ] The expected behavior is implemented.
+        - [ ] Automated verification covers the change.
+    validations:
+      required: true
+
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation plan
+      description: Explain how the change will be tested or verified.
+    validations:
+      required: true
