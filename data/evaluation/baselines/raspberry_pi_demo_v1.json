@@ -1,5 +1,17 @@
 {
+  "schema_version": 1,
+  "report_schema_version": 1,
   "dataset_id": "raspberry-pi-demo-v1",
+  "dataset_sha256": "805d98ddd565d3ab04270c9c8bf01d915c81ce19a919a591b7d48f12fc7a12d8",
+  "case_ids": [
+    "computers-headless",
+    "computers-unsupported",
+    "microcontrollers-boot",
+    "microcontrollers-unsupported",
+    "camera-ai-runtime",
+    "camera-ai-unsupported"
+  ],
+  "top_k": 3,
   "retrieval_summary": {
     "precision_at_k": 0.3333333333,
     "recall_at_k": 1.0,

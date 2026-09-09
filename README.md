@@ -16,20 +16,25 @@ rewriting, and generation locally; Docling converts complex files locally; Postg
 inspectable artifacts.
 Jina Reader is available only as an explicit opt-in for public URLs.
 
-## 90-second tour
+[![CI](https://github.com/FranRguezCer/RAGLab/actions/workflows/ci.yml/badge.svg)](https://github.com/FranRguezCer/RAGLab/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/badge/release-manual%20%2B%20verified-76f0ae)](docs/production-runbook.md)
 
-1. Open the deployed page and choose one of the three Raspberry Pi collections.
-2. Run a suggested question with the temporary demo token.
-3. Inspect its citations, retrieved fragments, and hybrid-ranking trace.
-4. Open **Ingestion and release evidence** to see the versioned corpus receipt.
-5. Compare that receipt with the evaluation scorecard that allowed the build to receive traffic.
-6. Return here and follow the [architecture](#architecture) from source to validated answer.
+## 90-second portfolio tour
 
-> RAGLab is a deployable, local-first RAG built from first principles: idempotent ingestion,
-> hybrid retrieval, strictly cited generation, reproducible evaluation, and GPU-aware delivery.
+1. Open the HTTPS demo configured through the [production runbook](docs/production-runbook.md).
+2. Choose any of the six curated Raspberry Pi questions; no token is required.
+3. Read the preserved answer or abstention, then inspect its citations and ranking trace.
+4. Compare the scorecard with the dataset hash, model identities, build SHA, and workflow URL.
+5. Notice the **Verified deployment snapshot** label: this is evaluated release evidence, not a
+   claim that a public VPS is running a GPU or generating a fresh answer per visit.
+6. Follow the architecture below from trusted GPU evaluation to stateless CPU serving.
 
-The public surface is intentionally read-only. Arbitrary uploads would add SSRF, malicious-file,
-storage, and GPU-abuse risks without demonstrating better retrieval engineering.
+> RAGLab is a local-first RAG built from first principles: idempotent ingestion, hybrid retrieval,
+> strictly cited generation, tamper-evident evaluation, and an approval-gated public release.
+
+The public surface is intentionally read-only and evidence-only. Arbitrary uploads and queries
+stay in the token-protected local GPU application; exposing them would add SSRF, storage, prompt,
+and GPU-abuse risks without demonstrating better retrieval engineering.
 
 ## Learning path
 
@@ -72,6 +77,36 @@ flowchart LR
     SINGLE --> VALIDATE["Strict source-ID validation"]
     HIER --> VALIDATE
     VALIDATE --> ANSWER["JSON answer + sources + original retrieval"]
+```
+
+The public delivery path deliberately separates expensive evidence production from inexpensive
+serving:
+
+```mermaid
+flowchart LR
+    CI["PR/main CI"] --> RUNTIME["Runtime image by SHA"]
+    RUNTIME --> GPU["Private GPU release runner"]
+    GPU --> INGEST_EVAL["Ingest + generate + evaluate"]
+    INGEST_EVAL --> GATE["Fail-closed promotion gate"]
+    GATE --> ARTIFACT["demo-release.json"]
+    ARTIFACT --> PORTFOLIO["Multi-arch CPU portfolio image"]
+    PORTFOLIO --> APPROVAL["Production approval"]
+    APPROVAL --> VPS["Traefik + stateless portfolio app"]
+```
+
+The delivery path deliberately separates expensive truth production from cheap public serving:
+
+```mermaid
+flowchart LR
+    PR["Pull request / main"] --> CI["Ruff · mypy · tests ≥85% · Compose · image build"]
+    CI --> GPU["Repository-scoped GPU runner"]
+    GPU --> INGEST["Pinned corpus ingestion"]
+    INGEST --> EVAL["Six-case real evaluation"]
+    EVAL --> GATE["Fail-closed evidence gate"]
+    GATE --> BUNDLE["demo-release.json"]
+    BUNDLE --> IMAGE["Multi-arch CPU portfolio image"]
+    IMAGE --> APPROVAL["production approval"]
+    APPROVAL --> VPS["Traefik + stateless portfolio app"]
 ```
 
 An **AST (Abstract Syntax Tree)** represents Markdown as typed blocks such as headings,
@@ -182,100 +217,53 @@ python -m pip install -e . --no-deps
 Running ingestion again returns `status: "skipped"` and `chunk_count: 0`; it does not duplicate
 vectors.
 
-## Recruiter demo: corpus to deployment gate
+## Verified public portfolio demo
 
-The demo corpus contains nine small, attributed Markdown snapshots derived from official
-Raspberry Pi documentation: three each for computers, microcontrollers, and camera/AI. The
-manifest pins every source by SHA-256 and upstream revision before any write begins. Ingestion
-reads the tracked snapshot without network access but stores its revision-pinned upstream URL as
-the canonical source URI, making live citations navigable.
+The public application is a stateless viewer for evidence created during a trusted release. It is
+not the local live-query application and it contains no `/v1/query` route.
+
+| Public endpoint | Purpose |
+| --- | --- |
+| `GET /health/ready` | Fails unless the evidence bytes, build, image, dataset, cases, and metrics validate. |
+| `GET /v1/demo/status` | Release provenance, resolved models, dataset identity, and scorecard. |
+| `GET /v1/demo/cases` | The six curated questions, available without a token. |
+| `GET /v1/demo/cases/{case_id}` | Preserved answer or abstention, citations, ranking, validation, and duration. |
+
+The release artifact contains the evaluated commit and runtime image digest, dataset SHA-256,
+ordered case IDs, retrieval configuration, resolved model digests or revisions, ingestion receipt,
+complete traces, recomputed scorecard, gate result, timestamp, and producing workflow URL. The
+portfolio image also embeds the artifact's SHA-256, so readiness fails on any byte-level change.
+
+### Reproduce the evidence path
 
 ```bash
 raglab-ingest-corpus data/demo/raspberry_pi_v1.json \
-  --receipt artifacts/ingestion/raspberry_pi_v1.json
+  --receipt artifacts/ingestion.json
 
+RAGLAB_BUILD_SHA=<40-character-sha> \
+RAGLAB_IMAGE_DIGEST=sha256:<64-hex-digest> \
 raglab-evaluate data/evaluation/raspberry_pi_demo_v1.json \
-  --output artifacts/evaluation/raspberry_pi_demo_v1.json
+  --collection rpi-computers \
+  --output artifacts/evaluation.json
 
-raglab-evaluation-gate artifacts/evaluation/raspberry_pi_demo_v1.json \
+raglab-evaluation-gate artifacts/evaluation.json \
   data/evaluation/baselines/raspberry_pi_demo_v1.json
-
-RAGLAB_DEMO_TOKEN=replace-me uvicorn raglab.demo_cli:app --port 8000
 ```
 
-`GET /health/live`, `GET /health/ready`, and `GET /v1/demo/status` are public and read-only.
-`POST /v1/query` requires a bearer token; the browser keeps it only in memory. There is no public
-ingestion or deletion endpoint. The promotion gate rejects forbidden phrases, invalid citations,
-wrong abstention behavior, or a summary metric regression greater than `0.05`. The status response
-includes the run, its baseline, and an `approved` value recomputed from that same policy.
+`raglab-build-demo-release` combines that gated run with the receipt and resolved model manifest.
+In normal operation, the manual **Release verified portfolio demo** workflow performs the whole
+sequence on the repository-scoped `self-hosted, raglab-gpu` runner, publishes the evidence as a
+GitHub artifact, builds the CPU-only `linux/amd64` and `linux/arm64` image, waits for production
+approval, and deploys by digest.
 
-For one-server production, `compose.production.yaml` keeps PostgreSQL and Ollama private, starts
-the API only after model initialization, idempotent ingestion, and evaluation succeed, and uses
-Traefik for TLS, rate limiting, and concurrency limits. The GitHub Actions workflows verify pull
-requests, publish images by commit SHA, record the resulting immutable digest, and require that
-digest plus its build SHA for an approval-gated production deployment with rollback.
+Production runs only Traefik and the portfolio container. PostgreSQL, Ollama, Hugging Face models,
+and NVIDIA access remain on the trusted release runner. A failed readiness or smoke check restores
+both the prior Compose definition and the prior image/build state.
 
-### Production operator path
-
-The target host needs Linux `amd64`, Docker Compose v2, the NVIDIA Container Toolkit, a working
-NVIDIA GPU, and DNS for `RAGLAB_DOMAIN` pointing at the server. Copy `env.template` to
-`/srv/raglab/.env`, replace every example credential, and set at least:
-
-| Variable | Purpose |
-| -------- | ------- |
-| `POSTGRES_PASSWORD` | Private ParadeDB credential; use a generated secret. |
-| `RAGLAB_DEMO_TOKEN` | Bearer token accepted only by `POST /v1/query`. |
-| `RAGLAB_DOMAIN` | Public hostname used by Traefik. |
-| `ACME_EMAIL` | Let's Encrypt registration and expiry contact. |
-| `RAGLAB_IMAGE` | Immutable `ghcr.io/...@sha256:...` image reference. |
-| `RAGLAB_BUILD_SHA` | Source revision displayed by `/v1/demo/status`. |
-
-Do not publish PostgreSQL or Ollama ports. The production Compose file exposes only Traefik on
-ports 80 and 443 and persists database data, Ollama models, Hugging Face models, receipts, and TLS
-certificates in named volumes.
-
-The normal release path is:
-
-1. Merge a verified change into `main`; **Publish image** pushes the commit tag and reports its
-   immutable digest in the workflow summary.
-2. Run **Deploy production** with that `sha256:...` digest and its source commit SHA, then approve
-   the protected `production` environment.
-3. The server pulls the digest, initializes pinned models, ingests the corpus, runs the Raspberry
-   Pi evaluation and promotion gate, starts the API, and executes the authenticated golden query.
-4. Any ingestion, evaluation, health, or smoke failure restores `.last-good-image`. On the first
-   deployment there is no previous image, so failure stops promotion rather than inventing one.
-
-Provision the host once before running that workflow. The SSH account stored in
-`DEPLOY_HOST`/`DEPLOY_SSH_KEY` must be able to write `/srv/raglab` and use Docker:
-
-```bash
-sudo install -d -o "$USER" -g "$USER" /srv/raglab
-cd /srv/raglab
-umask 077
-# Create .env here from env.template and replace every example value.
-docker login ghcr.io  # Required when the GHCR package is private.
-```
-
-The workflow deliberately copies only `compose.production.yaml`; it never overwrites the
-server-owned `.env`. Make the GHCR package public or authenticate the server with a read-only
-package token.
-
-For a manual dry run on the target host:
-
-```bash
-cd /srv/raglab
-docker compose -f compose.production.yaml config --quiet
-docker compose -f compose.production.yaml pull
-docker compose -f compose.production.yaml up -d --wait
-curl -fsS "https://${RAGLAB_DOMAIN}/health/ready"
-```
-
-Inside the containers, `/app/artifacts/ingestion/raspberry_pi_v1.json` is replaced only after all
-nine sources succeed, while `/app/artifacts/evaluation/raspberry_pi_demo_v1.json` keeps complete
-per-case traces. These files live in the named `artifacts` volume rather than the host project
-directory. Inspect them through `/v1/demo/status` or with
-`docker compose -f compose.production.yaml exec -T api cat /app/artifacts/...`. Neither path
-exposes write operations or model chain-of-thought.
+Use the [production runbook](docs/production-runbook.md) for VPS bootstrap, DNS, immutable Traefik
+pinning, GitHub environment secrets, runner isolation, release, and rollback. The public URL and a
+real screenshot can only be added after the first approved release because this repository does
+not invent deployment evidence.
 
 # Chapter 1 — Ingestion and indexing
 

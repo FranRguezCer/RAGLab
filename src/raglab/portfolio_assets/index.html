@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="A verified, inspectable RAG deployment snapshot.">
+    <title>RAGLab — verified RAG evidence</title>
+    <link rel="stylesheet" href="/assets/styles.css">
+    <script src="/assets/app.js" defer></script>
+  </head>
+  <body>
+    <header class="hero">
+      <nav><a class="wordmark" href="/">RAG<span>Lab</span></a><a href="#evidence">Release evidence</a></nav>
+      <div class="hero-copy">
+        <p class="eyebrow">Retrieval-augmented generation, made inspectable</p>
+        <h1>Don't trust the answer.<br><em>Inspect the evidence.</em></h1>
+        <p class="lede">Six real Raspberry Pi questions. Each response was generated on a private GPU, evaluated before promotion, and preserved as an immutable public artifact.</p>
+        <div class="badges"><span class="badge verified">✓ Verified deployment snapshot</span><span class="badge" id="build-badge">Loading release…</span></div>
+      </div>
+    </header>
+
+    <main>
+      <section class="case-section" aria-labelledby="cases-title">
+        <div class="section-heading"><p class="eyebrow">Curated evaluation set</p><h2 id="cases-title">Choose a question</h2></div>
+        <div id="case-picker" class="case-picker" role="list"></div>
+        <article id="case-detail" class="answer-card" aria-live="polite">
+          <p class="loading">Loading verified evidence…</p>
+        </article>
+      </section>
+
+      <section class="pipeline" aria-labelledby="pipeline-title">
+        <div class="section-heading"><p class="eyebrow">Transparent by design</p><h2 id="pipeline-title">What happened before this reached you</h2></div>
+        <div class="steps">
+          <article><b>01</b><h3>Retrieve</h3><p>Hybrid semantic and keyword search finds candidate passages.</p></article>
+          <article><b>02</b><h3>Rank</h3><p>Reranking and diversity selection turn candidates into evidence.</p></article>
+          <article><b>03</b><h3>Generate</h3><p>The local model answers only from selected, citable sources.</p></article>
+          <article><b>04</b><h3>Verify</h3><p>A fail-closed gate recomputes metrics before release promotion.</p></article>
+        </div>
+      </section>
+
+      <section id="evidence" class="evidence" aria-labelledby="evidence-title">
+        <div class="section-heading"><p class="eyebrow">Release provenance</p><h2 id="evidence-title">Evidence, not promises</h2></div>
+        <div id="scorecard" class="scorecard"></div>
+        <dl id="provenance" class="provenance"></dl>
+      </section>
+    </main>
+    <footer><p>RAGLab · local-first engineering with auditable delivery</p></footer>
+  </body>
+</html>

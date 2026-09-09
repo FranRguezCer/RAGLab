@@ -23,6 +23,7 @@ raglab-generate = "raglab.generation.cli:entrypoint"
 raglab-evaluate = "raglab.evaluation_cli:entrypoint"
 raglab-ingest-corpus = "raglab.corpus_cli:entrypoint"
 raglab-evaluation-gate = "raglab.evaluation_gate:main"
+raglab-build-demo-release = "raglab.demo_release:main"
 
 [project.optional-dependencies]
 conversion = ["docling>=2,<3", "easyocr>=1.7,<2"]
@@ -34,6 +35,7 @@ generation = [
   "transformers>=4.51,<5",
 ]
 dev = [
+  "httpx>=0.28,<1",
   "mypy>=1.15,<2",
   "nbclient>=0.10,<1",
   "nbformat>=5.10,<6",
@@ -49,6 +51,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 "raglab.storage.migrations" = ["*.sql"]
 "raglab.generation.fixtures" = ["*.json"]
+"raglab.portfolio_assets" = ["*.html", "*.css", "*.js"]
 
 [tool.pytest.ini_options]
 addopts = "-ra"
