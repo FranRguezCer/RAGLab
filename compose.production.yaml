@@ -1,134 +1,76 @@
+name: raglab-production
+
 services:
   proxy:
-    image: traefik:v3.5
+    image: ${TRAEFIK_IMAGE:?set TRAEFIK_IMAGE to an immutable image digest}
     command:
+      - --api.dashboard=false
+      - --ping=true
       - --providers.docker=true
       - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
       - --entrypoints.websecure.address=:443
       - --certificatesresolvers.letsencrypt.acme.tlschallenge=true
-      - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}
+      - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:?set ACME_EMAIL}
       - --certificatesresolvers.letsencrypt.acme.storage=/certificates/acme.json
     ports:
       - "80:80"
       - "443:443"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - certificates:/certificates
-    restart: unless-stopped
-
-  postgres:
-    image: paradedb/paradedb:0.25.0-pg17
-    environment: &database
-      POSTGRES_DB: ${POSTGRES_DB:-raglab}
-      POSTGRES_USER: ${POSTGRES_USER:-raglab}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    volumes:
-      - postgres:/var/lib/postgresql/data
+      - traefik-certificates:/certificates
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 5s
-      retries: 30
-    restart: unless-stopped
-
-  ollama:
-    image: ollama/ollama:0.11.4
-    gpus: all
-    volumes:
-      - ollama:/root/.ollama
-    healthcheck:
-      test: ["CMD", "ollama", "list"]
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
       interval: 10s
       timeout: 5s
-      retries: 30
+      retries: 12
+    security_opt:
+      - no-new-privileges:true
     restart: unless-stopped
 
-  models:
-    image: ollama/ollama:0.11.4
+  portfolio:
+    image: ${RAGLAB_PORTFOLIO_IMAGE:?set RAGLAB_PORTFOLIO_IMAGE to an immutable image digest}
     environment:
-      OLLAMA_HOST: http://ollama:11434
-    entrypoint: ["/bin/sh", "-c"]
-    command: ["ollama pull qwen3-embedding:0.6b && ollama pull qwen3:4b"]
-    depends_on:
-      ollama: {condition: service_healthy}
-
-  python-models:
-    image: ${RAGLAB_IMAGE}
-    user: "0:0"
-    environment:
-      HF_HOME: /models
-    volumes:
-      - huggingface:/models
-    entrypoint: ["python", "-c"]
-    command:
-      - >-
-        from huggingface_hub import snapshot_download;
-        snapshot_download('tasksource/deberta-small-long-nli', revision='9a77395d4d3751be9e2a69c4ae318491d9b3fffb');
-        snapshot_download('BAAI/bge-reranker-v2-m3', revision='953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e')
-
-  ingest:
-    image: ${RAGLAB_IMAGE}
-    command: ["raglab-ingest-corpus", "data/demo/raspberry_pi_v1.json", "--receipt", "artifacts/ingestion/raspberry_pi_v1.json"]
-    environment: &raglab
-      RAGLAB_DSN: postgresql://${POSTGRES_USER:-raglab}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-raglab}
-      RAGLAB_OLLAMA_BASE_URL: http://ollama:11434
-      HF_HOME: /models
-    volumes:
-      - artifacts:/app/artifacts
-      - huggingface:/models
-    depends_on:
-      postgres: {condition: service_healthy}
-      models: {condition: service_completed_successfully}
-      python-models: {condition: service_completed_successfully}
-
-  evaluate:
-    image: ${RAGLAB_IMAGE}
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - >-
-        raglab-evaluate data/evaluation/raspberry_pi_demo_v1.json
-        --collection rpi-computers --output artifacts/evaluation/raspberry_pi_demo_v1.json &&
-        raglab-evaluation-gate artifacts/evaluation/raspberry_pi_demo_v1.json
-        data/evaluation/baselines/raspberry_pi_demo_v1.json
-    environment: *raglab
-    volumes:
-      - artifacts:/app/artifacts
-      - huggingface:/models
-    depends_on:
-      ingest: {condition: service_completed_successfully}
-
-  api:
-    image: ${RAGLAB_IMAGE}
-    gpus: all
-    environment:
-      <<: *raglab
-      RAGLAB_DEMO_TOKEN: ${RAGLAB_DEMO_TOKEN}
-      RAGLAB_BUILD_SHA: ${RAGLAB_BUILD_SHA}
-      RAGLAB_ARTIFACTS_DIR: /app/artifacts
-    volumes:
-      - artifacts:/app/artifacts:ro
-      - huggingface:/models
-    depends_on:
-      evaluate: {condition: service_completed_successfully}
+      RAGLAB_BUILD_SHA: ${RAGLAB_BUILD_SHA:?set RAGLAB_BUILD_SHA}
+      RAGLAB_DEMO_RELEASE: /app/demo-release.json
+    expose:
+      - "8000"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=5)"]
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=5)
       interval: 10s
       timeout: 6s
-      retries: 30
+      retries: 12
+      start_period: 5s
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     labels:
       - traefik.enable=true
-      - traefik.http.routers.raglab.rule=Host(`${RAGLAB_DOMAIN}`)
+      - traefik.http.routers.raglab.rule=Host(`${RAGLAB_DOMAIN:?set RAGLAB_DOMAIN}`)
       - traefik.http.routers.raglab.entrypoints=websecure
+      - traefik.http.routers.raglab.tls=true
       - traefik.http.routers.raglab.tls.certresolver=letsencrypt
-      - traefik.http.middlewares.raglab-limit.ratelimit.average=10
-      - traefik.http.middlewares.raglab-limit.ratelimit.burst=3
-      - traefik.http.middlewares.raglab-inflight.inflightreq.amount=2
+      - traefik.http.middlewares.raglab-limit.ratelimit.average=20
+      - traefik.http.middlewares.raglab-limit.ratelimit.burst=10
+      - traefik.http.middlewares.raglab-inflight.inflightreq.amount=20
       - traefik.http.routers.raglab.middlewares=raglab-limit,raglab-inflight
+      - traefik.http.services.raglab.loadbalancer.server.port=8000
+    depends_on:
+      proxy:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
-  postgres:
-  ollama:
-  artifacts:
-  certificates:
-  huggingface:
+  traefik-certificates:
