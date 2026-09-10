@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="A live, inspectable local RAG demonstration.">
+    <title>RAGLab — inspect the evidence</title>
+    <link rel="stylesheet" href="/assets/styles.css">
+    <script src="/assets/app.js" defer></script>
+  </head>
+  <body>
+    <header class="hero">
+      <nav><a class="wordmark" href="/">RAG<span>Lab</span></a><a href="#evidence">Evaluation evidence</a></nav>
+      <div class="hero-copy">
+        <p class="eyebrow">Live on a local GPU · inspectable by design</p>
+        <h1>Don't trust the answer.<br><em>Inspect the evidence.</em></h1>
+        <p class="lede">Ask the supervised local system or inspect six previously evaluated Raspberry Pi cases. Live telemetry is never presented as a ground-truth score.</p>
+        <div class="badges"><span class="badge verified">✓ Gated local evidence</span><span class="badge" id="build-badge">Loading evidence…</span></div>
+      </div>
+    </header>
+
+    <main>
+      <section class="live-section" aria-labelledby="live-title">
+        <div class="section-heading"><p class="eyebrow">Live query</p><h2 id="live-title">Ask the local system</h2></div>
+        <form id="query-form" class="query-form">
+          <label>Collection<select id="collection" name="collection"></select></label>
+          <label>Suggested question<select id="suggestion" name="suggestion"></select></label>
+          <label class="wide">Your question<textarea id="query" name="query" required maxlength="2000"></textarea></label>
+          <button id="ask" type="submit">Run query</button>
+        </form>
+        <article id="live-result" class="answer-card" aria-live="polite">
+          <p class="loading">The session token is held only in this page's memory.</p>
+        </article>
+      </section>
+
+      <section class="case-section" aria-labelledby="cases-title">
+        <div class="section-heading"><p class="eyebrow">Six-case evaluation</p><h2 id="cases-title">Inspect a grounded result</h2></div>
+        <div id="case-picker" class="case-picker" role="list"></div>
+        <article id="case-detail" class="answer-card" aria-live="polite"><p class="loading">Loading evaluated evidence…</p></article>
+      </section>
+
+      <section class="pipeline" aria-labelledby="pipeline-title">
+        <div class="section-heading"><p class="eyebrow">Transparent by design</p><h2 id="pipeline-title">What happens inside</h2></div>
+        <div class="steps">
+          <article><b>01</b><h3>Retrieve</h3><p>ANN and BM25 produce complementary candidates.</p></article>
+          <article><b>02</b><h3>Fuse</h3><p>RRF, reranking, and MMR select diverse evidence.</p></article>
+          <article><b>03</b><h3>Generate</h3><p>The local model answers or abstains and cites sources.</p></article>
+          <article><b>04</b><h3>Validate</h3><p>Facts, grounding, citations, tokens, and calls remain inspectable.</p></article>
+        </div>
+      </section>
+
+      <section id="evidence" class="evidence" aria-labelledby="evidence-title">
+        <div class="section-heading"><p class="eyebrow">Aggregate evaluation only</p><h2 id="evidence-title">Six-case scorecard</h2></div>
+        <div id="scorecard" class="scorecard"></div>
+        <dl id="provenance" class="provenance"></dl>
+      </section>
+    </main>
+    <footer><p>RAGLab · local-first engineering with auditable evidence</p></footer>
+  </body>
+</html>
