@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -9,6 +10,8 @@ from typing import Any
 import pytest
 
 import raglab.demo_command as command
+from raglab.contracts import CollectionConfig
+from raglab.corpus import CorpusManifest, load_corpus_manifest
 from raglab.demo_command import _read_tunnel_url, _stop_process, prepare, share
 from raglab.demo_evidence import InvalidDemoEvidence
 
@@ -74,6 +77,8 @@ def test_prepare_orchestrates_local_services_and_writes_evidence(
         lambda url: [{"name": "embed", "digest": "1"}, {"name": "generate", "digest": "2"}],
     )
     monkeypatch.setattr(command, "load_corpus_manifest", lambda path: object())
+    monkeypatch.setattr(command, "_reconcile_demo_collections", lambda *args: ())
+    monkeypatch.setattr(command, "_verify_demo_collections", lambda *args: None)
     monkeypatch.setattr(
         command,
         "CorpusIngestionApplication",
@@ -258,3 +263,117 @@ def test_prepare_and_share_reject_tracked_changes_but_ignore_untracked_files(
     )
     (tmp_path / "ignored-artifact.json").write_text("ignored")
     command._require_clean_tracked_tree(tmp_path)
+
+
+class _DemoRepository:
+    def __init__(
+        self,
+        configs: dict[str, CollectionConfig],
+        counts: dict[str, int],
+    ) -> None:
+        self.configs = configs
+        self.counts = counts
+        self.deleted: list[str] = []
+
+    def collection_config(self, name: str) -> CollectionConfig | None:
+        return self.configs.get(name)
+
+    def collection_stats(self, name: str) -> dict[str, object] | None:
+        return {"document_count": self.counts[name]} if name in self.counts else None
+
+    def delete_collection(self, name: str) -> bool:
+        self.deleted.append(name)
+        self.configs.pop(name, None)
+        self.counts.pop(name, None)
+        return True
+
+
+def _compatible_receipt(path: Path, manifest: CorpusManifest) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "corpus": manifest.corpus,
+                "version": manifest.version,
+                "manifest_fingerprint": manifest.fingerprint,
+                "source_count": len(manifest.sources),
+                "collections": list(manifest.collections),
+                "configuration": {
+                    "embedding_model": CollectionConfig(name="probe").model,
+                    "dimension": CollectionConfig(name="probe").dimension,
+                },
+                "sources": [{"collection": source.collection} for source in manifest.sources],
+            }
+        )
+    )
+
+
+def test_reconciliation_preserves_compatible_demo_collections(tmp_path: Path) -> None:
+    manifest = load_corpus_manifest("data/demo/raspberry_pi_v1.json")
+    receipt = tmp_path / "receipt.json"
+    _compatible_receipt(receipt, manifest)
+    repository = _DemoRepository(
+        {name: command._demo_collection_config(name) for name in manifest.collections},
+        {name: 3 for name in manifest.collections},
+    )
+
+    reset = command._reconcile_demo_collections(repository, manifest, receipt)  # type: ignore[arg-type]
+
+    assert reset == ()
+    assert repository.deleted == []
+
+
+def test_reconciliation_resets_only_legacy_or_polluted_manifest_collections(
+    tmp_path: Path,
+) -> None:
+    manifest = load_corpus_manifest("data/demo/raspberry_pi_v1.json")
+    receipt = tmp_path / "receipt.json"
+    _compatible_receipt(receipt, manifest)
+    computer, microcontroller, camera = manifest.collections
+    legacy = command._demo_collection_config(computer)
+    legacy = CollectionConfig(
+        name=legacy.name,
+        chunk_config={**legacy.chunk_config, "semantic_percentile": 85.0},
+    )
+    unrelated = CollectionConfig(name="unrelated")
+    repository = _DemoRepository(
+        {
+            computer: legacy,
+            microcontroller: command._demo_collection_config(microcontroller),
+            camera: command._demo_collection_config(camera),
+            "unrelated": unrelated,
+        },
+        {computer: 3, microcontroller: 4, camera: 3, "unrelated": 99},
+    )
+
+    reset = command._reconcile_demo_collections(repository, manifest, receipt)  # type: ignore[arg-type]
+
+    assert reset == (computer, microcontroller)
+    assert repository.deleted == [computer, microcontroller]
+    assert repository.configs["unrelated"] == unrelated
+
+
+def test_missing_receipt_forces_existing_demo_rebuild_and_postflight_checks_counts(
+    tmp_path: Path,
+) -> None:
+    manifest = load_corpus_manifest("data/demo/raspberry_pi_v1.json")
+    repository = _DemoRepository(
+        {name: command._demo_collection_config(name) for name in manifest.collections},
+        {name: 3 for name in manifest.collections},
+    )
+    assert (
+        command._reconcile_demo_collections(  # type: ignore[arg-type]
+            repository, manifest, tmp_path / "missing.json"
+        )
+        == manifest.collections
+    )
+
+    rebuilt = _DemoRepository(
+        {name: command._demo_collection_config(name) for name in manifest.collections},
+        {name: 3 for name in manifest.collections},
+    )
+    command._verify_demo_collections(rebuilt, manifest)  # type: ignore[arg-type]
+    rebuilt.counts[manifest.collections[0]] = 2
+    with pytest.raises(RuntimeError, match="exactly 3 documents"):
+        command._verify_demo_collections(rebuilt, manifest)  # type: ignore[arg-type]

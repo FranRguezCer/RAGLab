@@ -139,6 +139,30 @@ class PostgresRepository:
             for row in rows
         ]
 
+    def collection_config(self, name: str) -> CollectionConfig | None:
+        """Return one collection contract without inferring compatibility from errors."""
+
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """SELECT name, model, dimension, metric, chunk_config
+                   FROM collections WHERE name = %s""",
+                (name,),
+            )
+            row = cursor.fetchone()
+        if row is None:
+            return None
+        return CollectionConfig(
+            name=row[0], model=row[1], dimension=row[2], metric=row[3], chunk_config=row[4]
+        )
+
+    def delete_collection(self, name: str) -> bool:
+        """Delete exactly one named collection and its cascade-owned documents and chunks."""
+
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute("DELETE FROM collections WHERE name = %s RETURNING id", (name,))
+            deleted = cursor.fetchone()
+        return deleted is not None
+
     def current_document_id(
         self,
         config: CollectionConfig,
@@ -238,9 +262,7 @@ class PostgresRepository:
             cursor.execute("DELETE FROM chunks WHERE document_id = %s", (document_id,))
             for item in chunks:
                 chunk = item.chunk
-                start_page, end_page = _chunk_page_range(
-                    document, chunk.start_line, chunk.end_line
-                )
+                start_page, end_page = _chunk_page_range(document, chunk.start_line, chunk.end_line)
                 cursor.execute(
                     """INSERT INTO chunks
                            (document_id, chunk_index, content, embedding_text, token_count,

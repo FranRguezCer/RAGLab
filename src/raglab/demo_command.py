@@ -13,6 +13,7 @@ import signal
 import subprocess
 import sys
 import time
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict
 from pathlib import Path
@@ -20,8 +21,15 @@ from typing import Any, BinaryIO, cast
 from urllib.error import URLError
 from urllib.request import urlopen
 
+from raglab.chunking import ChunkingConfig
 from raglab.config import load_project_env
-from raglab.corpus import CorpusIngestionApplication, load_corpus_manifest, publish_receipt
+from raglab.contracts import CollectionConfig
+from raglab.corpus import (
+    CorpusIngestionApplication,
+    CorpusManifest,
+    load_corpus_manifest,
+    publish_receipt,
+)
 from raglab.demo_evidence import (
     InvalidDemoEvidence,
     build_evidence,
@@ -76,6 +84,7 @@ def prepare(*, root: Path = ROOT) -> dict[str, Any]:
     corpus_path = root / CORPUS
     receipt_path = root / INGESTION_RECEIPT
     manifest = load_corpus_manifest(corpus_path)
+    _reconcile_demo_collections(repository, manifest, receipt_path)
     ingestion = CorpusIngestionApplication(ingest).run(
         manifest,
         dsn=settings.dsn,
@@ -83,6 +92,7 @@ def prepare(*, root: Path = ROOT) -> dict[str, Any]:
         embedding_num_gpu=settings.embedding_num_gpu,
         keep_alive=settings.keep_alive,
     )
+    _verify_demo_collections(repository, manifest)
     publish_receipt(ingestion, receipt_path)
 
     retrieval = RetrievalConfig(candidate_k=50, top_k=3, rerank=True, mmr=True)
@@ -230,6 +240,97 @@ def _validate_runtime_identity(
         raise InvalidDemoEvidence("prepared retrieval configuration is outdated")
     if metadata.get("generation_config") != expected_generation:
         raise InvalidDemoEvidence("prepared generation configuration is outdated")
+
+
+def _reconcile_demo_collections(
+    repository: PostgresRepository, manifest: CorpusManifest, receipt_path: Path
+) -> tuple[str, ...]:
+    """Reset only manifest-owned collections whose last known state cannot be trusted."""
+
+    expected_counts = Counter(source.collection for source in manifest.sources)
+    expected_configs = {name: _demo_collection_config(name) for name in manifest.collections}
+    receipt = _read_optional_object(receipt_path)
+    receipt_compatible = _receipt_matches_manifest(receipt, manifest, expected_counts)
+    reset: list[str] = []
+    for name in manifest.collections:
+        current = repository.collection_config(name)
+        if current is None:
+            continue
+        stats = repository.collection_stats(name)
+        compatible = (
+            receipt_compatible
+            and current == expected_configs[name]
+            and stats is not None
+            and stats.get("document_count") == expected_counts[name]
+        )
+        if not compatible:
+            repository.delete_collection(name)
+            reset.append(name)
+    return tuple(reset)
+
+
+def _verify_demo_collections(repository: PostgresRepository, manifest: CorpusManifest) -> None:
+    expected_counts = Counter(source.collection for source in manifest.sources)
+    for name in manifest.collections:
+        if repository.collection_config(name) != _demo_collection_config(name):
+            raise RuntimeError(f"demo collection {name!r} has an unexpected configuration")
+        stats = repository.collection_stats(name)
+        if stats is None or stats.get("document_count") != expected_counts[name]:
+            raise RuntimeError(
+                f"demo collection {name!r} must contain exactly {expected_counts[name]} documents"
+            )
+
+
+def _demo_collection_config(name: str) -> CollectionConfig:
+    config = ChunkingConfig()
+    return CollectionConfig(
+        name=name,
+        chunk_config={
+            "strategy": "structure_plus_semantics",
+            "target_tokens": config.target_tokens,
+            "min_tokens": config.min_tokens,
+            "max_tokens": config.max_tokens,
+            "semantic_percentile": config.semantic_percentile,
+            "overlap_tokens": config.overlap_tokens,
+        },
+    )
+
+
+def _read_optional_object(path: Path) -> Mapping[str, Any] | None:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return cast(Mapping[str, Any], value) if isinstance(value, dict) else None
+
+
+def _receipt_matches_manifest(
+    receipt: Mapping[str, Any] | None,
+    manifest: CorpusManifest,
+    expected_counts: Mapping[str, int],
+) -> bool:
+    if receipt is None:
+        return False
+    sources = receipt.get("sources")
+    configuration = receipt.get("configuration")
+    if not isinstance(sources, list) or not isinstance(configuration, dict):
+        return False
+    recorded_counts = Counter(
+        source.get("collection")
+        for source in sources
+        if isinstance(source, dict) and isinstance(source.get("collection"), str)
+    )
+    return (
+        receipt.get("schema_version") == 1
+        and receipt.get("corpus") == manifest.corpus
+        and receipt.get("version") == manifest.version
+        and receipt.get("manifest_fingerprint") == manifest.fingerprint
+        and receipt.get("source_count") == len(manifest.sources)
+        and tuple(receipt.get("collections", ())) == manifest.collections
+        and recorded_counts == Counter(expected_counts)
+        and configuration.get("embedding_model") == CollectionConfig(name="probe").model
+        and configuration.get("dimension") == CollectionConfig(name="probe").dimension
+    )
 
 
 def _require_clean_tracked_tree(root: Path) -> None:
