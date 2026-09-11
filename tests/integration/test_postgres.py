@@ -121,3 +121,7 @@ def test_migration_idempotency_view_and_search() -> None:
         "chunk_count": 2,
         "token_count": 4,
     }
+    assert repository.collection_config(config.name) == config
+    assert repository.delete_collection(config.name) is True
+    assert repository.collection_config(config.name) is None
+    assert repository.collection_stats(config.name) is None

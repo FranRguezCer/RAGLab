@@ -12,9 +12,6 @@ concurrency:
 permissions:
   contents: read
 
-env:
-  RUNTIME_IMAGE: ghcr.io/franrguezcer/raglab
-
 jobs:
   quality:
     name: Quality and build
@@ -36,7 +33,7 @@ jobs:
         run: python -m pip install -e '.[dev,generation,retrieval,tokenizers]'
 
       - name: Lint
-        run: ruff check src tests scripts .github/release/resolve_models.py
+        run: ruff check src tests scripts
 
       - name: Type check
         run: mypy src/raglab
@@ -45,63 +42,7 @@ jobs:
         run: pytest --cov=raglab --cov-fail-under=85 -m 'not integration and not e2e'
 
       - name: Validate Compose definitions
-        env:
-          ACME_EMAIL: ci@example.invalid
-          POSTGRES_PASSWORD: ci-only
-          RAGLAB_BUILD_SHA: ${{ github.sha }}
-          RAGLAB_IMAGE_DIGEST: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-          RAGLAB_DOMAIN: demo.example.invalid
-          RAGLAB_IMAGE: ${{ env.RUNTIME_IMAGE }}:ci
-          RAGLAB_PORTFOLIO_IMAGE: ghcr.io/franrguezcer/raglab-portfolio:ci
-          TRAEFIK_IMAGE: traefik:v3.5
-        run: |
-          docker compose -f compose.yaml config --quiet
-          docker compose -f compose.production.yaml config --quiet
-          RELEASE_ARTIFACTS_DIR="$RUNNER_TEMP/raglab-release" \
-            docker compose -f .github/release/compose.gpu.yaml config --quiet
+        run: docker compose -f compose.yaml config --quiet
 
       - name: Build runtime image
-        run: docker build --tag "$RUNTIME_IMAGE:test" .
-
-  publish-runtime:
-    name: Publish immutable runtime image
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: quality
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - name: Check out source
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-
-      - name: Log in to GHCR
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and publish by commit SHA
-        id: publish
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        with:
-          context: .
-          push: true
-          platforms: linux/amd64
-          tags: ${{ env.RUNTIME_IMAGE }}:${{ github.sha }}
-          cache-from: type=gha,scope=runtime
-          cache-to: type=gha,mode=max,scope=runtime
-
-      - name: Record immutable runtime image
-        env:
-          DIGEST: ${{ steps.publish.outputs.digest }}
-        run: |
-          echo "### Runtime image" >> "$GITHUB_STEP_SUMMARY"
-          echo "\`$RUNTIME_IMAGE@$DIGEST\`" >> "$GITHUB_STEP_SUMMARY"
+        run: docker build --tag raglab:test .

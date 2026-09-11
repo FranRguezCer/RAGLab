@@ -84,13 +84,13 @@ class ScenarioModel:
         *,
         contents: Sequence[str] | None = None,
         selection_payload: dict[str, Any] | None = None,
-        units: list[dict[str, str]] | None = None,
+        selected: list[str] | None = None,
         unused: list[str] | None = None,
     ) -> None:
         self.facts_by_content = facts_by_content
         self.contents = tuple(contents or facts_by_content)
         self.selection_payload = selection_payload
-        self.units = units
+        self.selected = selected
         self.unused = unused
         self.calls = 0
         self.schemas: list[dict[str, Any]] = []
@@ -125,13 +125,15 @@ class ScenarioModel:
         )[0]
         rows = json.loads(encoded)
         ids = [row["fact_id"] for row in rows]
-        units = self.units or [{"fact_id": ids[0], "text": rows[0]["claim"]}]
+        selected_ids = self.selected if self.selected is not None else [ids[0]]
         unused = (
             self.unused
             if self.unused is not None
-            else [item for item in ids if item != units[0]["fact_id"]]
+            else [item for item in ids if item not in selected_ids]
         )
-        return ModelInvocation({"units": units, "unused_fact_ids": unused}, 10, 5)
+        return ModelInvocation(
+            {"selected_fact_ids": selected_ids, "unused_fact_ids": unused}, 10, 5
+        )
 
 
 def _fact(claim: str, quote: str) -> dict[str, str]:
@@ -143,11 +145,11 @@ def _pipeline(
     facts: dict[str, list[dict[str, str]]],
     *,
     verifier: Verifier | None = None,
-    units: list[dict[str, str]] | None = None,
+    selected: list[str] | None = None,
     unused: list[str] | None = None,
 ) -> tuple[GenerationPipeline, ScenarioModel, Verifier]:
     grounding = verifier or Verifier()
-    model = ScenarioModel(facts, contents=contents, units=units, unused=unused)
+    model = ScenarioModel(facts, contents=contents, selected=selected, unused=unused)
     pipeline = GenerationPipeline(
         Retrieval(contents),
         model,
@@ -266,14 +268,10 @@ def test_multipart_answer_uses_only_user_id_and_raw_request_path_facts() -> None
     user = "Remove user ID from metric labels."
     path = "Remove raw request path from metric labels."
     region = "Region is an approved metric label."
-    units = [
-        {"fact_id": "F1", "text": user},
-        {"fact_id": "F2", "text": path},
-    ]
     pipeline, _, _ = _pipeline(
         [user, path, region],
         {user: [_fact(user, user)], path: [_fact(path, path)], region: [_fact(region, region)]},
-        units=units,
+        selected=["F1", "F2"],
         unused=["F3"],
     )
 
@@ -286,44 +284,66 @@ def test_multipart_answer_uses_only_user_id_and_raw_request_path_facts() -> None
 
 
 @pytest.mark.parametrize(
-    ("units", "unused"),
+    ("selected", "unused"),
     [
-        ([{"fact_id": "F1", "text": "Alpha."}], []),
-        ([{"fact_id": "F1", "text": "Alpha."}], ["F1", "F2"]),
-        ([{"fact_id": "F9", "text": "Alpha."}], ["F1", "F2"]),
+        (["F1"], []),
+        (["F1"], ["F1", "F2"]),
+        (["F9"], ["F1", "F2"]),
     ],
 )
 def test_synthesis_requires_exact_duplicate_free_fact_partition(
-    units: list[dict[str, str]], unused: list[str]
+    selected: list[str], unused: list[str]
 ) -> None:
     alpha, beta = "Alpha.", "Beta."
     pipeline, _, _ = _pipeline(
         [alpha, beta],
         {alpha: [_fact(alpha, alpha)], beta: [_fact(beta, beta)]},
-        units=units,
+        selected=selected,
         unused=unused,
     )
 
     with pytest.raises(GenerationContractError, match="partition"):
-            pipeline.generate(GenerationRequest(RetrievalRequest("Alpha Beta")))
+        pipeline.generate(GenerationRequest(RetrievalRequest("Alpha Beta")))
 
 
-def test_unsupported_final_unit_fails_without_retry() -> None:
+def test_synthesis_renders_verified_claim_without_paraphrasing() -> None:
     quote = "The supported action is E41."
     claim = "Use E41."
-    unsupported = "Use E17."
-    verifier = Verifier({unsupported})
-    pipeline, model, _ = _pipeline(
+    pipeline, model, verifier = _pipeline(
         [quote],
         {quote: [_fact(claim, quote)]},
-        verifier=verifier,
-        units=[{"fact_id": "F1", "text": unsupported}],
+        selected=["F1"],
         unused=[],
     )
 
-    with pytest.raises(GenerationContractError, match="unsupported"):
-        pipeline.generate(GenerationRequest(RetrievalRequest("Which E41 action applies?")))
+    response = pipeline.generate(
+        GenerationRequest(RetrievalRequest("Which E41 action applies?"))
+    )
 
+    assert response.answer == claim
+    assert verifier.pairs == [(quote, claim)]
+    assert model.calls == 2
+
+
+def test_synthesis_can_reject_grounded_but_tangential_facts() -> None:
+    source = "The board has a 40-pin GPIO header."
+    claim = "The board exposes 40 GPIO header pins."
+    pipeline, model, _ = _pipeline(
+        [source],
+        {source: [_fact(claim, source)]},
+        selected=[],
+        unused=["F1"],
+    )
+
+    response = pipeline.generate(
+        GenerationRequest(RetrievalRequest("Which operating system password is configured?"))
+    )
+
+    assert response.abstained is True
+    assert response.source_ids == ()
+    assert response.metrics.facts_accepted == 1
+    assert response.metrics.facts_used == 0
+    assert response.metrics.model_calls == 2
     assert model.calls == 2
 
 
@@ -493,10 +513,7 @@ def test_verified_facts_use_bounded_reduction_only_when_synthesis_does_not_fit(
             )
             return ModelInvocation(
                 {
-                    "units": [
-                        {"fact_id": row["fact_id"], "text": row["claim"]}
-                        for row in rows
-                    ],
+                    "selected_fact_ids": [row["fact_id"] for row in rows],
                     "unused_fact_ids": [],
                 }
             )

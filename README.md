@@ -17,24 +17,22 @@ inspectable artifacts.
 Jina Reader is available only as an explicit opt-in for public URLs.
 
 [![CI](https://github.com/FranRguezCer/RAGLab/actions/workflows/ci.yml/badge.svg)](https://github.com/FranRguezCer/RAGLab/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/badge/release-manual%20%2B%20verified-76f0ae)](docs/production-runbook.md)
+[![Demo](https://img.shields.io/badge/demo-local%20%2B%20temporary-76f0ae)](#live-local-demo)
 
-## 90-second portfolio tour
+## 90-second live demo tour
 
-1. Open the HTTPS demo configured through the [production runbook](docs/production-runbook.md).
-2. Choose any of the six curated Raspberry Pi questions; no token is required.
-3. Read the preserved answer or abstention, then inspect its citations and ranking trace.
-4. Compare the scorecard with the dataset hash, model identities, build SHA, and workflow URL.
-5. Notice the **Verified deployment snapshot** label: this is evaluated release evidence, not a
-   claim that a public VPS is running a GPU or generating a fresh answer per visit.
-6. Follow the architecture below from trusted GPU evaluation to stateless CPU serving.
+1. Run `raglab-demo prepare` once, or whenever the corpus, dataset, configuration, models, or commit changes.
+2. Run `raglab-demo share` and open the printed one-session HTTPS URL.
+3. Ask a suggested or free-form question against one of the three Raspberry Pi collections.
+4. Inspect citations, ANN/BM25 fusion, reranking, MMR, model calls, tokens, and duration.
+5. Compare the live telemetry (which has no ground truth) with the separate six-case scorecard.
+6. Press `Ctrl-C`; both the local server and Quick Tunnel stop and the session token becomes useless.
 
 > RAGLab is a local-first RAG built from first principles: idempotent ingestion, hybrid retrieval,
-> strictly cited generation, tamper-evident evaluation, and an approval-gated public release.
+> strictly cited generation, tamper-evident evaluation, and temporary supervised sharing.
 
-The public surface is intentionally read-only and evidence-only. Arbitrary uploads and queries
-stay in the token-protected local GPU application; exposing them would add SSRF, storage, prompt,
-and GPU-abuse risks without demonstrating better retrieval engineering.
+Uploads, remote ingestion, prompt internals, and conversation persistence are intentionally absent.
+The demo exposes only a prepared local corpus while its operator is present.
 
 ## Learning path
 
@@ -79,35 +77,20 @@ flowchart LR
     VALIDATE --> ANSWER["JSON answer + sources + original retrieval"]
 ```
 
-The public delivery path deliberately separates expensive evidence production from inexpensive
-serving:
+The demonstration stays local except while its operator explicitly opens a temporary tunnel:
 
 ```mermaid
 flowchart LR
-    CI["PR/main CI"] --> RUNTIME["Runtime image by SHA"]
-    RUNTIME --> GPU["Private GPU release runner"]
-    GPU --> INGEST_EVAL["Ingest + generate + evaluate"]
-    INGEST_EVAL --> GATE["Fail-closed promotion gate"]
-    GATE --> ARTIFACT["demo-release.json"]
-    ARTIFACT --> PORTFOLIO["Multi-arch CPU portfolio image"]
-    PORTFOLIO --> APPROVAL["Production approval"]
-    APPROVAL --> VPS["Traefik + stateless portfolio app"]
+    BROWSER["Browser"] --> TUNNEL["Cloudflare Quick Tunnel"]
+    TUNNEL --> API["FastAPI on 127.0.0.1"]
+    API --> OLLAMA["Native Ollama + CUDA GPU"]
+    API --> DB["PostgreSQL in Docker"]
+    PREPARE["prepare: ingest + six-case evaluation + gate"] --> EVIDENCE["Tamper-evident local manifest"]
+    EVIDENCE --> API
 ```
 
-The delivery path deliberately separates expensive truth production from cheap public serving:
-
-```mermaid
-flowchart LR
-    PR["Pull request / main"] --> CI["Ruff · mypy · tests ≥85% · Compose · image build"]
-    CI --> GPU["Repository-scoped GPU runner"]
-    GPU --> INGEST["Pinned corpus ingestion"]
-    INGEST --> EVAL["Six-case real evaluation"]
-    EVAL --> GATE["Fail-closed evidence gate"]
-    GATE --> BUNDLE["demo-release.json"]
-    BUNDLE --> IMAGE["Multi-arch CPU portfolio image"]
-    IMAGE --> APPROVAL["production approval"]
-    APPROVAL --> VPS["Traefik + stateless portfolio app"]
-```
+CI runs Ruff, mypy, hermetic tests with at least 85% coverage, Compose validation, and a local image
+build. It does not publish runtime images or deploy infrastructure.
 
 An **AST (Abstract Syntax Tree)** represents Markdown as typed blocks such as headings,
 paragraphs, lists, and code. An **embedding** is a numeric vector that places semantically related
@@ -217,53 +200,42 @@ python -m pip install -e . --no-deps
 Running ingestion again returns `status: "skipped"` and `chunk_count: 0`; it does not duplicate
 vectors.
 
-## Verified public portfolio demo
+## Live local demo
 
-The public application is a stateless viewer for evidence created during a trusted release. It is
-not the local live-query application and it contains no `/v1/query` route.
-
-| Public endpoint | Purpose |
-| --- | --- |
-| `GET /health/ready` | Fails unless the evidence bytes, build, image, dataset, cases, and metrics validate. |
-| `GET /v1/demo/status` | Release provenance, resolved models, dataset identity, and scorecard. |
-| `GET /v1/demo/cases` | The six curated questions, available without a token. |
-| `GET /v1/demo/cases/{case_id}` | Preserved answer or abstention, citations, ranking, validation, and duration. |
-
-The release artifact contains the evaluated commit and runtime image digest, dataset SHA-256,
-ordered case IDs, retrieval configuration, resolved model digests or revisions, ingestion receipt,
-complete traces, recomputed scorecard, gate result, timestamp, and producing workflow URL. The
-portfolio image also embeds the artifact's SHA-256, so readiness fails on any byte-level change.
-
-### Reproduce the evidence path
+The supervised demo uses native Ollama for CUDA inference and Docker only for PostgreSQL. Prepared
+evidence is reused until its commit, inputs, models, or maximum age no longer match.
 
 ```bash
-raglab-ingest-corpus data/demo/raspberry_pi_v1.json \
-  --receipt artifacts/ingestion.json
-
-RAGLAB_BUILD_SHA=<40-character-sha> \
-RAGLAB_IMAGE_DIGEST=sha256:<64-hex-digest> \
-raglab-evaluate data/evaluation/raspberry_pi_demo_v1.json \
-  --collection rpi-computers \
-  --output artifacts/evaluation.json
-
-raglab-evaluation-gate artifacts/evaluation.json \
-  data/evaluation/baselines/raspberry_pi_demo_v1.json
+# One-time prerequisite: install cloudflared 2026.9.0 at ~/.local/bin/cloudflared.
+# Its required SHA-256 is checked by the launcher.
+raglab-demo prepare
+raglab-demo share
+# Ctrl-C closes Uvicorn and the Quick Tunnel.
 ```
 
-`raglab-build-demo-release` combines that gated run with the receipt and resolved model manifest.
-In normal operation, the manual **Release verified portfolio demo** workflow performs the whole
-sequence on the repository-scoped `self-hosted, raglab-gpu` runner, publishes the evidence as a
-GitHub artifact, builds the CPU-only `linux/amd64` and `linux/arm64` image, waits for production
-approval, and deploys by digest.
+`share` prints `https://<random>.trycloudflare.com/#token=...`. The browser consumes and removes the
+fragment, holds the token only in memory, and sends it as a bearer token for `POST /v1/query`.
+Uvicorn binds only to `127.0.0.1`; no inbound port is opened. OpenAPI is disabled, security headers
+prevent caching and framing, and one active query occupies the GPU while concurrent queries receive
+`429`.
 
-Production runs only Traefik and the portfolio container. PostgreSQL, Ollama, Hugging Face models,
-and NVIDIA access remain on the trusted release runner. A failed readiness or smoke check restores
-both the prior Compose definition and the prior image/build state.
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /health/ready` | Verify PostgreSQL and the current tamper-evident preparation manifest. |
+| `GET /v1/demo/status` | Collections, resolved models, dataset, provenance, and aggregate scorecard. |
+| `GET /v1/demo/cases` | Summaries of the six evaluated cases. |
+| `GET /v1/demo/cases/{case_id}` | Preserved answer, citations, ranking, and deterministic validations. |
+| `POST /v1/query` | Authenticated live inference against one selected collection. |
 
-Use the [production runbook](docs/production-runbook.md) for VPS bootstrap, DNS, immutable Traefik
-pinning, GitHub environment secrets, runner isolation, release, and rollback. The public URL and a
-real screenshot can only be added after the first approved release because this repository does
-not invent deployment evidence.
+The aggregate recall@3, precision@3, MRR@3, fact coverage, grounding, citation precision, and
+abstention accuracy belong only to the six-case evaluation. A free-form query reports duration,
+tokens, calls, and an explicit `has_ground_truth: false`; it never inherits the evaluation scores.
+
+The launcher expects the Linux AMD64 `cloudflared` 2026.9.0 binary to have SHA-256
+`53b7a7a5420d188758d24341294acb0d1bca54296548ac05e38811a694ac6134`. Quick Tunnels are temporary
+and have no SLA, do not support SSE, and allow at most 200 concurrent requests. RAGLab does not
+stream and admits only one inference at a time. Use them only for attended demonstrations; see the
+[official Cloudflare Quick Tunnels documentation](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/).
 
 # Chapter 1 — Ingestion and indexing
 
