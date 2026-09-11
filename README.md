@@ -205,13 +205,65 @@ vectors.
 The supervised demo uses native Ollama for CUDA inference and Docker only for PostgreSQL. Prepared
 evidence is reused until its commit, inputs, models, or maximum age no longer match.
 
+### Install the tunnel client once
+
+The launcher accepts only the pinned Linux AMD64 binary and verifies it again before every share
+session. Downloading to `/tmp` first prevents an incomplete download from replacing a working
+installation:
+
 ```bash
-# One-time prerequisite: install cloudflared 2026.9.0 at ~/.local/bin/cloudflared.
-# Its required SHA-256 is checked by the launcher.
-raglab-demo prepare
-raglab-demo share
-# Ctrl-C closes Uvicorn and the Quick Tunnel.
+curl --fail --location \
+  https://github.com/cloudflare/cloudflared/releases/download/2026.9.0/cloudflared-linux-amd64 \
+  --output /tmp/cloudflared
+printf '%s  %s\n' \
+  '53b7a7a5420d188758d24341294acb0d1bca54296548ac05e38811a694ac6134' \
+  /tmp/cloudflared | sha256sum --check --strict
+mkdir -p "$HOME/.local/bin"
+install -m 0755 /tmp/cloudflared "$HOME/.local/bin/cloudflared"
+"$HOME/.local/bin/cloudflared" --version
 ```
+
+### Prepare and present
+
+Run every command from the repository root. `prepare` starts only the PostgreSQL Compose service;
+Ollama remains a native host service so it can use CUDA directly.
+
+```bash
+source .venv/bin/activate
+python -m pip install -e . --no-deps
+
+# Optional preflight diagnostics. Both model names and the NVIDIA GPU must appear.
+nvidia-smi
+ollama list
+
+# Run once initially, and again after changing tracked code, corpus, dataset,
+# evaluation baseline, model identity, or demo configuration.
+raglab-demo prepare
+
+# Start the UI and tunnel in the foreground.
+raglab-demo share
+# Open the printed HTTPS URL from another device or network.
+# Press Ctrl-C after the demonstration.
+```
+
+Expected behavior:
+
+1. `prepare` creates `artifacts/demo/ingestion.json` and `artifacts/demo/evidence.json` only after
+   all nine public documents, six evaluation cases, and the promotion gate succeed.
+2. `share` prints one URL shaped like `https://<random>.trycloudflare.com/#token=...`.
+3. The UI offers three Raspberry Pi collections, suggested questions, free-form queries, citations,
+   timing, ranking stages, model calls, token counts, and the separate evaluated scorecard.
+4. `Ctrl-C` stops both Uvicorn and `cloudflared`; the URL and its 256-bit session token are no
+   longer usable.
+
+An existing `raglab-paradedb` volume is safe to keep. Ingestion is idempotent when the receipt,
+collection configuration, and exact document counts match. If one of the three manifest-owned demo
+collections is incompatible, `prepare` replaces only that collection before ingesting it again;
+unrelated collections in the same PostgreSQL volume are not deleted.
+
+Both commands reject staged or unstaged changes to tracked files. This guarantees that the evidence
+commit identifies the code actually being demonstrated. Commit or restore tracked changes, then run
+`prepare` again.
 
 `share` prints `https://<random>.trycloudflare.com/#token=...`. The browser consumes and removes the
 fragment, holds the token only in memory, and sends it as a bearer token for `POST /v1/query`.
@@ -236,6 +288,55 @@ The launcher expects the Linux AMD64 `cloudflared` 2026.9.0 binary to have SHA-2
 and have no SLA, do not support SSE, and allow at most 200 concurrent requests. RAGLab does not
 stream and admits only one inference at a time. Use them only for attended demonstrations; see the
 [official Cloudflare Quick Tunnels documentation](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/).
+
+### Verify the demo from the terminal
+
+The first block reproduces the checks run by CI without requiring PostgreSQL, Ollama, or a GPU:
+
+```bash
+source .venv/bin/activate
+python -m pip install -e '.[dev,generation,retrieval,tokenizers]'
+ruff check src tests scripts
+mypy src/raglab
+pytest --cov=raglab --cov-fail-under=85 -m 'not integration and not e2e'
+docker compose -f compose.yaml config --quiet
+docker build --tag raglab:test .
+```
+
+Then verify the real local stack and regenerate the six-case evidence:
+
+```bash
+docker compose up -d --wait postgres
+curl --fail http://127.0.0.1:11434/api/tags >/dev/null
+nvidia-smi --query-gpu=name,driver_version --format=csv,noheader
+raglab-demo prepare
+
+python - <<'PY'
+import json
+from pathlib import Path
+
+evidence = json.loads(Path("artifacts/demo/evidence.json").read_text())
+print("commit:", evidence["prepared"]["commit"])
+print("created_at:", evidence["prepared"]["created_at"])
+print("gate_passed:", evidence["gate"]["passed"])
+print("cases:", len(evidence["evaluation"]["traces"]))
+print("retrieval:", evidence["evaluation"]["report"]["retrieval_summary"])
+print("generation:", evidence["evaluation"]["report"]["generation_summary"])
+PY
+```
+
+The expected minimum result is `gate_passed: True` and `cases: 6`. Finally, run
+`raglab-demo share`, open the printed URL from a different network, submit a query, inspect its
+citations and telemetry, press `Ctrl-C`, and confirm that the temporary URL no longer responds.
+
+Useful diagnostics:
+
+```bash
+docker compose ps
+docker compose logs postgres
+ollama ps
+raglab-demo --help
+```
 
 # Chapter 1 — Ingestion and indexing
 
