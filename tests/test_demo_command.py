@@ -50,7 +50,7 @@ def test_share_rejects_missing_evidence_before_starting_processes(tmp_path: Path
             share(root=tmp_path, cloudflared=tmp_path / "cloudflared")
 
 
-def test_prepare_orchestrates_local_services_and_writes_evidence(
+def test_prepare_canonicalizes_tuple_traces_before_gate_and_evidence(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     settings = SimpleNamespace(
@@ -62,7 +62,12 @@ def test_prepare_orchestrates_local_services_and_writes_evidence(
         keep_alive="5m",
         num_ctx=4096,
     )
-    evaluation = SimpleNamespace(to_dict=lambda: {"evaluation": True})
+    evaluation_data = {
+        "traces": ({"case": {"id": "case-1"}},),
+        "report": {"dataset_id": "demo"},
+        "metadata": {"dataset_sha256": "f" * 64},
+    }
+    evaluation = SimpleNamespace(to_json=lambda: json.dumps(evaluation_data))
     application = SimpleNamespace(run=lambda dataset: evaluation)
     ingestion = SimpleNamespace()
     seen: dict[str, Any] = {}
@@ -94,11 +99,19 @@ def test_prepare_orchestrates_local_services_and_writes_evidence(
     )
     monkeypatch.setattr(command, "load_cases", lambda path: object())
     monkeypatch.setattr(command, "_read_object", lambda path: {"baseline": True})
-    monkeypatch.setattr(command, "validate_promotion", lambda run, baseline: None)
+    def validate_promotion(run: dict[str, Any], baseline: dict[str, Any]) -> None:
+        assert baseline == {"baseline": True}
+        assert isinstance(run["traces"], list)
+        seen["validated"] = run
+
+    monkeypatch.setattr(command, "validate_promotion", validate_promotion)
     monkeypatch.setattr(command, "sha256_file", lambda path: "f" * 64)
     monkeypatch.setattr(command, "current_commit", lambda root: "a" * 40)
     monkeypatch.setattr(
-        command, "build_evidence", lambda *args, **kwargs: {"prepared": {"commit": "a" * 40}}
+        command,
+        "build_evidence",
+        lambda evaluation, *args, **kwargs: seen.update(evaluation=evaluation)
+        or {"prepared": {"commit": "a" * 40}},
     )
     monkeypatch.setattr(
         command, "write_evidence", lambda path, value: seen.update(path=path, value=value)
@@ -108,6 +121,8 @@ def test_prepare_orchestrates_local_services_and_writes_evidence(
 
     assert result["prepared"]["commit"] == "a" * 40
     assert seen["path"] == tmp_path / command.EVIDENCE
+    assert seen["evaluation"] == seen["validated"]
+    assert isinstance(seen["evaluation"]["traces"], list)
 
 
 def test_share_prints_fragment_url_and_stops_both_processes(

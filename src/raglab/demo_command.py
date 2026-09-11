@@ -109,7 +109,7 @@ def prepare(*, root: Path = ROOT) -> dict[str, Any]:
         generation_config=generation,
     ).run(load_cases(root / DATASET))
     baseline = _read_object(root / BASELINE)
-    evaluation_payload = evaluation.to_dict()
+    evaluation_payload = cast(dict[str, Any], json.loads(evaluation.to_json()))
     validate_promotion(evaluation_payload, baseline)
     inputs = {str(path): sha256_file(root / path) for path in (CORPUS, DATASET, BASELINE)}
     evidence = build_evidence(
