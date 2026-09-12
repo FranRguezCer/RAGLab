@@ -25,6 +25,26 @@ def test_browser_consumes_fragment_token_without_persistent_storage() -> None:
     assert "Bearer ${sessionToken}" in script
 
 
+def test_scorecard_explains_bounded_curated_metrics() -> None:
+    page = Path("src/raglab/demo_assets/index.html").read_text(encoding="utf-8")
+    script = Path("src/raglab/demo_assets/app.js").read_text(encoding="utf-8")
+
+    assert "deliberately small, curated dataset" in page
+    assert "does not replay stored scores" in page
+    assert "not a general benchmark" in page
+    for metric in (
+        "recall_at_k",
+        "precision_at_k",
+        "mrr_at_k",
+        "fact_coverage",
+        "grounded_fact_coverage",
+        "citation_precision",
+        "abstention_accuracy",
+    ):
+        assert metric in script
+    assert "Each answer case labels one source" in script
+
+
 def test_launcher_extracts_quick_tunnel_url_and_cleans_up_process() -> None:
     process = subprocess.Popen(
         [
