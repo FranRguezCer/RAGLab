@@ -18,6 +18,18 @@ const suggestions = {
 const escaped = value => String(value ?? '').replace(/[&<>'"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
 const prettyName = value => String(value).replaceAll('_', ' ').replace(/\b\w/g, c => c.toUpperCase());
 const metricValue = value => typeof value === 'number' ? `${Math.round(value * 100)}%` : escaped(value);
+const metricDefinitions = topK => {
+  const precisionCeiling = Math.round(100 / topK);
+  return [
+    ['recall_at_k', `Recall@${topK}`, `Share of labeled relevant sources found in the top ${topK}.`],
+    ['precision_at_k', `Precision@${topK}`, `Share of the top ${topK} results labeled relevant. Each answer case labels one source, so ${precisionCeiling}% is the ceiling here.`],
+    ['mrr_at_k', `MRR@${topK}`, 'How early the first relevant source appears; 100% means it ranked first.'],
+    ['fact_coverage', 'Fact coverage', 'Expected answer facts that appeared in the response.'],
+    ['grounded_fact_coverage', 'Grounded facts', 'Expected facts both stated and supported by a valid cited source.'],
+    ['citation_precision', 'Citation precision', 'Cited sources that were valid for the claims using them.'],
+    ['abstention_accuracy', 'Abstention accuracy', 'Cases where the system correctly answered or abstained.'],
+  ];
+};
 
 async function json(path, options) {
   const response = await fetch(path, options);
@@ -52,7 +64,7 @@ async function showCase(caseId, button) {
 function renderStatus(status) {
   document.querySelector('#build-badge').textContent = `commit ${status.provenance.commit.slice(0, 12)}`;
   const metrics = {...status.scorecard.retrieval, ...status.scorecard.generation};
-  document.querySelector('#scorecard').innerHTML = Object.entries(metrics).map(([name, value]) => `<article class="metric"><strong>${metricValue(value)}</strong><span>${escaped(prettyName(name))}</span></article>`).join('');
+  document.querySelector('#scorecard').innerHTML = metricDefinitions(status.dataset.top_k).map(([name, label, description]) => `<article class="metric"><strong>${metricValue(metrics[name])}</strong><span>${escaped(label)}</span><p>${escaped(description)}</p></article>`).join('');
   document.querySelector('#provenance').innerHTML = `<dt>Dataset</dt><dd>${escaped(status.dataset.id)} · ${escaped(status.dataset.sha256)}</dd><dt>Models</dt><dd>${escaped(JSON.stringify(status.models))}</dd><dt>Commit</dt><dd>${escaped(status.provenance.commit)}</dd><dt>Evaluated</dt><dd>${escaped(status.provenance.evaluated_at)} · ${escaped(status.provenance.duration_seconds)}s</dd><dt>Evidence</dt><dd>sha256:${escaped(status.provenance.integrity_sha256)}</dd>`;
   for (const name of Object.keys(status.collections)) collection.add(new Option(prettyName(name), name));
   chooseCollection();

@@ -1,5 +1,7 @@
 # RAGLab
 
+![RAGLab — local-first RAG with inspectable evidence](docs/assets/raglab-header.svg)
+
 RAGLab is a local-first, inspectable laboratory for learning **Retrieval-Augmented Generation
 (RAG)** from first principles. RAG retrieves source evidence before a language model answers,
 reducing reliance on the model's internal memory and making citations possible. This repository
