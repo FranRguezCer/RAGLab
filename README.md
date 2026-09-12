@@ -99,6 +99,11 @@ four stages and their CLI controls.
 
 ## Minimal demo
 
+This 14-second tour shows the local-first workflow, a cited answer, and the bounded evaluation
+scorecard:
+
+![RAGLab tour showing a cited answer and separate retrieval and generation scores](docs/assets/raglab-tour.gif)
+
 The demo uses native Ollama for GPU inference and Docker only for PostgreSQL. Run it from a clean
 Git worktree because both commands reject tracked changes:
 
